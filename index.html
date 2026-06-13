@@ -1,0 +1,2156 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
+    <meta name="theme-color" content="#87CEEB">
+    <link rel="manifest" href="manifest.json">
+    <meta name="apple-mobile-web-app-capable" content="yes">
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+    <meta name="apple-mobile-web-app-title" content="ぴよランナー２">
+    <link rel="apple-touch-icon" href="QR_piyorunner.png">
+    <link rel="icon" href="QR_piyorunner.png">
+
+    <title>ぴよランナー２</title>
+    <style>
+        html, body {
+            width: 100%; height: 100%; margin: 0; padding: 0;
+            overflow: hidden; position: fixed;
+            font-family: 'Hiragino Kaku Gothic ProN', 'Meiryo', sans-serif;
+            background-color: #333;
+            user-select: none; -webkit-user-select: none;
+            touch-action: none; overscroll-behavior: none;
+            -webkit-tap-highlight-color: transparent;
+        }
+
+        #game-wrapper {
+            position: absolute; top: 0; left: 0;
+            width: 100%; height: 100%;
+            overflow: hidden; background-color: #87CEEB;
+        }
+
+        @media screen and (orientation: portrait) {
+            #game-wrapper {
+                width: 100vh; height: 100vw;
+                transform: rotate(90deg); transform-origin: top left;
+                position: absolute; top: 0; left: 100vw;
+            }
+        }
+
+        #game-container { width: 100%; height: 100%; display: block; }
+        #game-container canvas { width: 100% !important; height: 100% !important; display: block; }
+
+        #ui-layer {
+            position: absolute; top: 0; left: 0;
+            width: 100%; height: 100%;
+            pointer-events: none; z-index: 10;
+        }
+
+        /* 左上ステータス */
+        #status-bar {
+            position: absolute; top: 20px; left: 20px;
+            display: flex; flex-direction: column; gap: 6px;
+            padding-top: env(safe-area-inset-top);
+            padding-left: env(safe-area-inset-left);
+        }
+
+        #stage-label {
+            font-size: 20px; font-weight: bold; color: #fff;
+            text-shadow: 1px 1px 0 rgba(0,0,0,0.5);
+        }
+
+        /* 時間ゲージ */
+        #time-container {
+            width: 240px; height: 22px;
+            background-color: rgba(0, 0, 0, 0.3);
+            border: 2px solid #fff; border-radius: 11px;
+            overflow: hidden; position: relative;
+        }
+        #time-bar {
+            width: 100%; height: 100%;
+            background: linear-gradient(90deg, #4FC3F7, #29B6F6);
+            transition: width 0.1s linear, background-color 0.3s;
+        }
+        #time-bar.warning { background: linear-gradient(90deg, #FF7043, #F4511E); }
+        #time-text {
+            position: absolute; top: 0; left: 0; width: 100%; height: 100%;
+            display: flex; align-items: center; justify-content: center;
+            font-size: 13px; font-weight: bold; color: #fff;
+            text-shadow: 0 0 3px rgba(0,0,0,0.7);
+        }
+
+        /* 右上スコア */
+        #score-board {
+            position: absolute; top: 20px; right: 20px;
+            font-size: 32px; font-weight: bold; color: #fff;
+            text-shadow: 1px 1px 0px rgba(0,0,0,0.5);
+            padding-top: env(safe-area-inset-top);
+            padding-right: env(safe-area-inset-right);
+        }
+
+        /* ゴールまでの距離ゲージ（画面下） */
+        #progress-container {
+            position: absolute; bottom: 16px; left: 50%;
+            transform: translateX(-50%);
+            width: 60%; max-width: 360px; height: 14px;
+            background: rgba(0,0,0,0.3); border: 2px solid #fff;
+            border-radius: 8px; overflow: visible;
+            padding-bottom: env(safe-area-inset-bottom);
+        }
+        #progress-track {
+            position: absolute; top: 0; left: 0; width: 100%; height: 100%;
+            border-radius: 8px; overflow: hidden;
+            background: linear-gradient(90deg, #C8E6C9, #A5D6A7);
+        }
+        #progress-start {
+            position: absolute; left: 2px; top: 50%;
+            transform: translateY(-50%); font-size: 14px;
+        }
+        #progress-flag {
+            position: absolute; right: 2px; top: 50%;
+            transform: translateY(-50%); font-size: 16px;
+        }
+        #progress-runner {
+            position: absolute; top: 50%; left: 0%;
+            transform: translate(-50%, -55%); font-size: 22px;
+            transition: left 0.2s linear;
+        }
+        #progress-runner span {
+            display: inline-block;
+            transform: scaleX(-1);
+            filter: drop-shadow(0 1px 1px rgba(0,0,0,0.4));
+        }
+
+        /* しびれメッセージ */
+        #stun-msg, #bubbu-msg {
+            position: absolute; top: 50%; left: 50%;
+            transform: translate(-50%, -50%) scale(0);
+            font-size: 56px; font-weight: 900;
+            white-space: nowrap; opacity: 0;
+            z-index: 50; pointer-events: none;
+            transition: transform 0.2s cubic-bezier(0.175, 0.885, 0.32, 1.275), opacity 0.2s;
+        }
+        #bubbu-msg { color: #ff0000; text-shadow: 3px 3px 0 #fff, -1px -1px 0 #fff; }
+        #stun-msg { color: #FFD700; text-shadow: 3px 3px 0 #c62828, -1px -1px 0 #c62828; }
+        #stun-msg.show, #bubbu-msg.show {
+            transform: translate(-50%, -50%) scale(1); opacity: 1;
+        }
+
+        /* アイテム/床効果のトースト表示（プレイヤー付近にふわっと出る） */
+        #effect-toast {
+            position: absolute; top: 38%; left: 50%;
+            transform: translate(-50%, -50%) translateY(0) scale(0.7);
+            font-size: 28px; font-weight: 900;
+            white-space: nowrap; opacity: 0;
+            z-index: 55; pointer-events: none;
+            transition: transform 0.3s ease-out, opacity 0.3s ease-out;
+            -webkit-text-stroke: 3px var(--toast-color, #fff);
+            paint-order: stroke fill;
+            color: #fff;
+        }
+        #effect-toast.show {
+            transform: translate(-50%, -50%) translateY(-30px) scale(1);
+            opacity: 1;
+        }
+        /* 緑：プラス効果 / 紫：マイナス効果 / オレンジ：得点 */
+        #effect-toast.plus  { --toast-color: #2E7D32;
+            text-shadow: 2px 2px 0 #2E7D32, -2px -2px 0 #2E7D32, 2px -2px 0 #2E7D32, -2px 2px 0 #2E7D32; }
+        #effect-toast.minus { --toast-color: #6A1B9A;
+            text-shadow: 2px 2px 0 #6A1B9A, -2px -2px 0 #6A1B9A, 2px -2px 0 #6A1B9A, -2px 2px 0 #6A1B9A; }
+        #effect-toast.bonus { --toast-color: #E65100;
+            text-shadow: 2px 2px 0 #E65100, -2px -2px 0 #E65100, 2px -2px 0 #E65100, -2px 2px 0 #E65100; }
+
+        /* ゴール演出オーバーレイ */
+        #goal-banner {
+            position: absolute; top: 0; left: 0; width: 100%; height: 100%;
+            display: flex; flex-direction: column;
+            justify-content: center; align-items: center;
+            pointer-events: none; z-index: 80; opacity: 0;
+            background-color: rgba(0,0,0,0);
+            transition: opacity 0.3s, background-color 0.3s;
+        }
+        #goal-banner.show {
+            opacity: 1;
+            background-color: rgba(0,0,0,0.55);
+            pointer-events: auto;
+        }
+        #goal-banner .goal-text {
+            font-size: 64px; font-weight: 900; color: #FFD700;
+            text-shadow: 4px 4px 0 #ff6b6b, -2px -2px 0 #fff;
+            animation: goalPop 0.6s ease-out;
+        }
+        #goal-banner .goal-summary {
+            margin-top: 14px;
+            background: rgba(255,255,255,0.95);
+            color: #333;
+            border-radius: 12px;
+            padding: 16px 28px;
+            min-width: 220px;
+            box-shadow: 0 4px 10px rgba(0,0,0,0.3);
+            font-size: 18px;
+        }
+        #goal-banner .goal-summary .row {
+            display: flex; justify-content: space-between;
+            padding: 4px 0; gap: 24px;
+        }
+        #goal-banner .goal-summary .row.total {
+            border-top: 2px solid #FFD700; margin-top: 6px;
+            padding-top: 8px; font-weight: bold; font-size: 22px;
+            color: #2E7D32;
+        }
+        .goal-next-btn {
+            margin-top: 18px; font-size: 18px; padding: 12px 28px;
+        }
+        @keyframes goalPop {
+            0% { transform: scale(0) rotate(-15deg); }
+            60% { transform: scale(1.3) rotate(5deg); }
+            100% { transform: scale(1) rotate(0); }
+        }
+
+        /* 中央メッセージ & ランキング */
+        #overlay {
+            position: absolute; top: 0; left: 0; width: 100%; height: 100%;
+            background-color: rgba(0, 0, 0, 0.7);
+            display: flex; flex-direction: column;
+            justify-content: center; align-items: center;
+            pointer-events: auto; z-index: 100;
+            transition: opacity 0.3s;
+        }
+
+        h1 {
+            font-size: 48px; color: #FFD700;
+            text-shadow: 2px 2px 0px #ff6b6b; margin: 0 0 10px 0;
+        }
+
+        .instructions {
+            color: white; font-size: 15px; text-align: center;
+            line-height: 1.8; margin-bottom: 10px;
+            background: rgba(0, 0, 0, 0.5); padding: 15px;
+            border-radius: 10px; min-width: 280px;
+        }
+
+        .speed-select-area {
+            background: rgba(255, 255, 255, 0.2); padding: 10px 20px;
+            border-radius: 10px; margin-bottom: 20px;
+            text-align: center; color: white;
+        }
+        .speed-options { display: flex; gap: 15px; margin-top: 5px; justify-content: center; }
+        .speed-label {
+            display: flex; align-items: center; gap: 5px; cursor: pointer;
+            font-size: 18px; background: rgba(0,0,0,0.3);
+            padding: 8px 15px; border-radius: 20px; border: 2px solid transparent;
+        }
+        .speed-label input { display: none; }
+        .speed-label:has(input:checked) {
+            background: #FFD700; color: #333; border-color: #fff; font-weight: bold;
+        }
+
+        #ranking-board {
+            background: rgba(255, 255, 255, 0.9); width: 80%; max-width: 500px;
+            max-height: 50vh; border-radius: 10px; padding: 15px;
+            margin-bottom: 20px; overflow-y: auto; color: #333; font-size: 14px;
+            box-shadow: 0 4px 10px rgba(0,0,0,0.3);
+            -webkit-overflow-scrolling: touch;
+        }
+        #ranking-board h2 {
+            text-align: center; margin: 0 0 10px 0; color: #2E7D32;
+            border-bottom: 2px solid #2E7D32; padding-bottom: 5px;
+        }
+        .rank-list { list-style: none; padding: 0; margin: 0; }
+        .rank-item {
+            display: flex; justify-content: space-between;
+            padding: 8px 10px; border-bottom: 1px solid #ddd;
+        }
+        .rank-item:last-child { border-bottom: none; }
+        .rank-item.current-score {
+            background-color: #FFD700; font-weight: bold; border-radius: 5px;
+        }
+        .rank-rank { width: 50px; font-weight: bold; }
+        .rank-score { flex: 1; text-align: right; font-family: monospace; font-size: 16px; }
+        .rank-date { width: 100px; text-align: right; font-size: 10px; color: #666; margin-left: 10px; line-height: 20px;}
+
+        .btn-group { display: flex; gap: 20px; }
+
+        button {
+            padding: 12px 30px; font-size: 20px; font-weight: bold;
+            color: white; background-color: #4CAF50; border: none;
+            border-radius: 50px; cursor: pointer;
+            border-bottom: 4px solid #2E7D32;
+            transition: transform 0.1s; pointer-events: auto;
+            -webkit-tap-highlight-color: transparent;
+        }
+        button:active { transform: translateY(4px); border-bottom: none; margin-top: 4px; }
+        button.sound-off { background-color: #757575; border-bottom: 4px solid #424242; }
+
+        .hidden { display: none !important; }
+
+        #damage-flash {
+            position: absolute; top: 0; left: 0; width: 100%; height: 100%;
+            background-color: rgba(255, 0, 0, 0.4); opacity: 0;
+            pointer-events: none; z-index: 5; transition: opacity 0.1s;
+        }
+
+        #effect-overlay {
+            position: absolute; top: 0; left: 0; width: 100%; height: 100%;
+            pointer-events: none; z-index: 4; opacity: 0;
+            transition: opacity 0.3s; background: transparent;
+            will-change: opacity, background-color;
+        }
+
+        /* ステージ開始テロップ */
+        #stage-intro {
+            position: absolute; top: 0; left: 0; width: 100%; height: 100%;
+            display: flex; flex-direction: column;
+            justify-content: center; align-items: center;
+            pointer-events: none; z-index: 90; opacity: 0;
+            transition: opacity 0.3s;
+        }
+        #stage-intro.show { opacity: 1; }
+        #stage-intro .si-stage {
+            font-size: 64px; font-weight: 900; color: #fff;
+            text-shadow: 3px 3px 0 #1565C0, -1px -1px 0 #1565C0;
+        }
+        #stage-intro .si-name {
+            font-size: 30px; font-weight: bold; color: #FFD700;
+            margin-top: 6px; text-shadow: 2px 2px 0 rgba(0,0,0,0.5);
+        }
+    </style>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+</head>
+<body>
+
+    <div id="game-wrapper">
+        <div id="game-container"></div>
+        <div id="damage-flash"></div>
+        <div id="effect-overlay"></div>
+
+        <div id="ui-layer">
+            <div id="status-bar">
+                <div id="stage-label">STAGE 1</div>
+                <div id="time-container">
+                    <div id="time-bar"></div>
+                    <div id="time-text">30.0</div>
+                </div>
+            </div>
+            <div id="score-board">0</div>
+
+            <div id="progress-container">
+                <div id="progress-track"></div>
+                <div id="progress-start">🐣</div>
+                <div id="progress-flag">🚩</div>
+                <div id="progress-runner"><span>🐤</span></div>
+            </div>
+
+            <div id="bubbu-msg">ぶっぶー</div>
+            <div id="stun-msg">ビリビリ！</div>
+            <div id="effect-toast"></div>
+
+            <div id="goal-banner">
+                <div class="goal-text">GOAL!</div>
+                <div class="goal-summary">
+                    <div class="row"><span>これまでの得点</span><span id="goal-score-before">0</span></div>
+                    <div class="row"><span>残り時間ボーナス</span><span id="goal-bonus">+0</span></div>
+                    <div class="row total"><span>合計</span><span id="goal-score-total">0</span></div>
+                </div>
+                <button class="goal-next-btn" id="goal-next-btn">つぎのステージへ ▶</button>
+            </div>
+
+            <div id="stage-intro">
+                <div class="si-stage" id="si-stage">STAGE 1</div>
+                <div class="si-name" id="si-name"></div>
+            </div>
+        </div>
+
+        <div id="overlay">
+            <h1 id="title-text">ぴよランナー２</h1>
+
+            <div class="instructions" id="instructions">
+                👆 タップ：ジャンプ<br>
+                ↕️ 上下スワイプ：レーン移動<br>
+                🚩 ゴールをめざそう！<br>
+                ⏰ 時計：時間アップ ／ ⭐ スター：むてき
+            </div>
+
+            <div class="speed-select-area" id="speed-selector">
+                <div>スピード選択</div>
+                <div class="speed-options">
+                    <label class="speed-label">
+                        <input type="radio" name="speed" value="low" checked> 🔰のんびり
+                    </label>
+                    <label class="speed-label">
+                        <input type="radio" name="speed" value="high"> 🚀はやい
+                    </label>
+                </div>
+            </div>
+
+            <div id="ranking-board" class="hidden">
+                <h2>RANKING (TOP 100)</h2>
+                <ul id="ranking-list" class="rank-list"></ul>
+            </div>
+
+            <div class="instructions hidden" id="result-area">
+                SCORE: <span id="final-score">0</span>
+            </div>
+
+            <div class="btn-group" id="start-buttons">
+                <button id="start-sound-on">音ありでSTART</button>
+                <button id="start-sound-off" class="sound-off">音なし</button>
+            </div>
+            <button id="retry-btn" class="hidden">もう一度</button>
+        </div>
+    </div>
+
+<script>
+// =====================================================================
+// ぴよランナー２
+//  - 時間制ゴール制 / ステージ制 / BGM / 新アイテム
+// =====================================================================
+
+// --- PWA Service Worker ---
+if ('serviceWorker' in navigator) {
+    window.addEventListener('load', () => {
+        navigator.serviceWorker.register('./sw.js')
+            .then(reg => console.log('SW registered:', reg))
+            .catch(err => console.log('SW registration failed:', err));
+    });
+}
+window.onerror = (m, s, l, c, e) => console.error(m, e);
+
+// =====================================================================
+// 0. 環境 / 設定
+// =====================================================================
+
+const IS_IOS = /iPad|iPhone|iPod/.test(navigator.userAgent) && !window.MSStream;
+const BASE_SPEED_VAL = IS_IOS ? 0.45 : 0.25;
+
+const COLORS = {
+    SKY: 0x87CEEB,
+    GROUND_A: 0xA8E6A1, GROUND_B: 0x66C97F,
+    HOLE: 0x222222,
+    SPRING_FLOOR: 0xFFA500, SPRING_SIDE: 0xCD8500,
+    SLOW_FLOOR: 0x7E57C2, SLOW_SIDE: 0x4527A0,   // 遅くなる床（ねばねば紫）
+    PIYO_BODY: 0xFFD700, PIYO_BEAK: 0xFFA500, PIYO_EYE: 0x000000,
+    BLOCK: 0x6A5ACD, BLOCK_DARK: 0x483D8B,
+    TIRE: 0x333333, TIRE_WHEEL: 0xCCCCCC,
+    CAR_BODY: 0xEF5350, CAR_BODY_DARK: 0xC62828, CAR_WINDOW: 0xB3E5FC,
+    STICK: 0x8B4513,
+    GOAL_POLE: 0xECEFF1, GOAL_FLAG: 0xE53935
+};
+
+const CONFIG = {
+    LANE_COUNT: 4, LANE_WIDTH: 2.5, TILE_SIZE: 3,
+    WORLD_COLS: 20, TILE_X_START: -10, TILE_RECYCLE_X: -20,
+
+    BASE_SPEED: BASE_SPEED_VAL,
+    LOW_SPEED_RATIO: 0.7,
+    TIRE_SPEED_RATIO: 1.3,
+    SLOW_SPEED_RATIO: 0.55,        // とろ床効果中の速度係数（小さいほど遅くなる）
+    SPEED_LERP: 0.05,
+
+    GRAVITY: 0.025, FLOAT_GRAVITY: 0.008,
+    JUMP_FORCE: 0.45, LONG_JUMP_FORCE: 0.35,
+    LANE_LERP: 0.25, LANE_LERP_SLOW: 0.1,
+
+    // 効果(ms)
+    TIRE_DURATION_MS: 20000,
+    FLOOR_SLOW_DURATION_MS: 4000,  // 遅くなる床を踏んだ後の継続
+    STAR_DURATION_MS: 6000,        // スター無敵
+
+    // しびれ（被弾ペナルティ）
+    STUN_DURATION_MS: 1000,
+
+    INVINCIBLE_HIT: 60,
+
+    // 時間・ステージ
+    STAGE_TIME_SEC: 30,            // 各ステージ制限時間（基本値）
+    TIME_REDUCTION_PER_TIER: 3,    // 難易度1段階ごとに制限時間を短縮(秒)
+    MIN_STAGE_TIME_SEC: 15,        // 制限時間の下限
+    GOAL_DISTANCE: 220,            // ゴールまでの走行距離（基本値。約20秒で到達=残りがボーナス）
+    LONG_GOAL_DISTANCE: 320,       // 「距離が伸びる」ステージの距離（タイトな時間になる）
+    LONG_GOAL_CHANCE: 0.4,         // 6ステージ以降、距離が伸びる確率
+    CLOCK_BONUS_SEC: 5,            // 時計で増える秒数
+    TIME_BONUS_PER_SEC: 100,       // 残り時間1秒あたりのボーナス点
+    DIFFICULTY_STEP: 6,            // 6ステージごとに難化
+
+    HEAL_ONIGIRI_SEC: 3,           // おにぎり＝時間回復（体力廃止に伴い時間に変換）
+    SCORE_CAKE: 300,
+    SCORE_SMASH: 50,               // 無敵中に障害物を粉砕したときの得点
+
+    MAX_OBJECTS: 8,
+};
+
+// オブジェクト定義（衝突半幅など）
+const OBJECT_DEFS = {
+    cake:         { hitX: 1.0, hitY: 1.5, hitZ: 1.2, kind: 'item' },
+    onigiri:      { hitX: 1.0, hitY: 1.5, hitZ: 1.2, kind: 'item' },
+    clock:        { hitX: 1.0, hitY: 1.5, hitZ: 1.2, kind: 'item' },
+    star:         { hitX: 1.0, hitY: 1.5, hitZ: 1.2, kind: 'item' },
+    tire:         { hitX: 1.0, hitY: 1.5, hitZ: 1.2, kind: 'item' },
+    fire:         { hitX: 1.0, hitY: 1.0, hitZ: 1.2, kind: 'obstacle' },
+    moving_block: { hitX: 1.6, hitY: 1.8, hitZ: 1.8, kind: 'obstacle' },
+    ghost_sign:   { hitX: 1.0, hitY: 1.2, hitZ: 0.8, kind: 'obstacle' },
+};
+
+const FLOATING_TYPES = ['cake', 'onigiri', 'clock', 'star'];
+const ITEM_TYPES = ['cake', 'onigiri', 'clock', 'star', 'tire'];
+const OBSTACLE_TYPES = ['fire', 'moving_block', 'ghost_sign'];
+
+// =====================================================================
+// ステージ定義
+//  baseStages[0..4] の5種をループ。5ステージごとに難易度倍率が上がる。
+//  weights: スポーン時の各種オブジェクト出現比率（0なら出ない）
+//  bgm: BGMのキー
+//  sky: 背景色
+// =====================================================================
+
+const STAGE_DEFS = [
+    {
+        name: 'はらっぱ', sky: 0x87CEEB, bgm: 'grass',
+        groundA: 0xA8E6A1, groundB: 0x66C97F,
+        weights: { fire: 1, moving_block: 1, ghost_sign: 0.5,
+                   cake: 2, onigiri: 1.5, clock: 1, star: 0.5, tire: 0.7,
+                   hole: 1, spring: 1, slow_floor: 0.5 }
+    },
+    {
+        name: 'ひのやま', sky: 0xE57373, bgm: 'fire',
+        groundA: 0xBCAAA4, groundB: 0x8D6E63,
+        // 炎が多い・看板少なめ
+        weights: { fire: 3, moving_block: 1, ghost_sign: 0.2,
+                   cake: 1.5, onigiri: 2, clock: 1.5, star: 0.7, tire: 0.7,
+                   hole: 0.7, spring: 1, slow_floor: 0.3 }
+    },
+    {
+        name: 'おばけのもり', sky: 0x5C6BC0, bgm: 'ghost',
+        groundA: 0x7986CB, groundB: 0x5C6BC0,
+        // おばけ看板が多い・炎少なめ
+        weights: { fire: 0.5, moving_block: 1, ghost_sign: 3,
+                   cake: 1.5, onigiri: 1.5, clock: 1.5, star: 1, tire: 0.5,
+                   hole: 1, spring: 0.7, slow_floor: 1 }
+    },
+    {
+        name: 'がたがたシティ', sky: 0x90A4AE, bgm: 'city',
+        groundA: 0xB0BEC5, groundB: 0x78909C,
+        // 動くブロックが多い・とろ床多い
+        weights: { fire: 1, moving_block: 3, ghost_sign: 0.7,
+                   cake: 2, onigiri: 1, clock: 1, star: 0.7, tire: 1,
+                   hole: 0.5, spring: 1, slow_floor: 2 }
+    },
+    {
+        name: 'そらのみち', sky: 0x4FC3F7, bgm: 'sky',
+        groundA: 0xB3E5FC, groundB: 0x81D4FA,
+        // 穴が多い・バネ多い・アイテム豊富
+        weights: { fire: 1, moving_block: 1.5, ghost_sign: 1,
+                   cake: 2.5, onigiri: 1.5, clock: 1.5, star: 1, tire: 1.2,
+                   hole: 2.5, spring: 2, slow_floor: 0.5 }
+    },
+];
+
+function getStageDef(stageNum) {
+    return STAGE_DEFS[(stageNum - 1) % STAGE_DEFS.length];
+}
+function getDifficultyTier(stageNum) {
+    return Math.floor((stageNum - 1) / CONFIG.DIFFICULTY_STEP); // 0,1,2...
+}
+// 難易度倍率：ステージが進むほど速くなる
+function getDifficultySpeedMul(stageNum) {
+    return 1 + getDifficultyTier(stageNum) * 0.15;
+}
+// 難易度で障害物がやや増える倍率
+function getObstacleMul(stageNum) {
+    return 1 + getDifficultyTier(stageNum) * 0.25;
+}
+// 難易度が上がるほど制限時間が短くなる
+function getStageTimeSec(stageNum) {
+    const t = CONFIG.STAGE_TIME_SEC - getDifficultyTier(stageNum) * CONFIG.TIME_REDUCTION_PER_TIER;
+    return Math.max(CONFIG.MIN_STAGE_TIME_SEC, t);
+}
+// 難易度が上がるほどBGMが速くなる（tempo=ms間隔なので小さくするほど速い）
+function getBgmTempoMul(stageNum) {
+    return Math.max(0.6, 1 - getDifficultyTier(stageNum) * 0.12);
+}
+// ゴールまでの距離。6ステージ以降は一定確率で距離が伸び、時間がタイトになる
+function getGoalDistance(stageNum) {
+    if (getDifficultyTier(stageNum) >= 1 && Math.random() < CONFIG.LONG_GOAL_CHANCE) {
+        return CONFIG.LONG_GOAL_DISTANCE;
+    }
+    return CONFIG.GOAL_DISTANCE;
+}
+
+// =====================================================================
+// 1. グローバル状態
+// =====================================================================
+
+const gameState = {
+    isPlaying: false,
+    score: 0,
+    stage: 1,
+    frameCount: 0,
+    distance: 0,           // 現ステージで走った距離
+    goalDistance: 220,     // 現ステージのゴール距離
+    stageTimeSec: 30,      // 現ステージの制限時間(秒)
+    timeLeftMs: 0,         // 残り時間(ms)
+    lastTickMs: 0,         // 前フレームの時刻
+    tireEndTime: 0,
+    floorSlowEndTime: 0,
+    starEndTime: 0,
+    stunEndTime: 0,        // しびれ終了時刻
+    goalSpawned: false,
+    goalReached: false,
+    transitioning: false,  // ステージ遷移演出中
+};
+
+let currentSpeed = CONFIG.BASE_SPEED;
+
+let scene, camera, renderer;
+let piyo, world, objectManager, inputManager, particleSystem, goalGate;
+const textureMap = {};
+let matGroundA, matGroundB, matSpring, matSlowFloor;
+
+// =====================================================================
+// 2. Sound Manager + BGM
+// =====================================================================
+
+class SoundManager {
+    constructor() {
+        this.ctx = null; this.enabled = false; this.masterGain = null;
+        this.bgmGain = null; this.bgmTimer = null; this.bgmStep = 0;
+        this.bgmKey = null; this.bgmStageTempoMul = 1; this.bgmModifier = 'normal';
+    }
+
+    init(enabled) {
+        this.enabled = enabled;
+        if (!enabled) return;
+        const AudioCtx = window.AudioContext || window.webkitAudioContext;
+        this.ctx = new AudioCtx();
+        this.masterGain = this.ctx.createGain();
+        this.masterGain.gain.value = 0.3;
+        this.masterGain.connect(this.ctx.destination);
+
+        this.bgmGain = this.ctx.createGain();
+        this.bgmGain.gain.value = 0.12;
+        this.bgmGain.connect(this.ctx.destination);
+    }
+
+    playTone(type) {
+        if (!this.enabled || !this.ctx) return;
+        if (this.ctx.state === 'suspended') this.ctx.resume();
+        const osc = this.ctx.createOscillator();
+        const gain = this.ctx.createGain();
+        osc.connect(gain); gain.connect(this.masterGain);
+        const now = this.ctx.currentTime;
+
+        switch (type) {
+            case 'jump':
+                osc.type = 'sine';
+                osc.frequency.setValueAtTime(400, now);
+                osc.frequency.exponentialRampToValueAtTime(800, now + 0.1);
+                gain.gain.setValueAtTime(1, now);
+                gain.gain.exponentialRampToValueAtTime(0.01, now + 0.1);
+                osc.start(now); osc.stop(now + 0.1); break;
+            case 'coin':
+                osc.type = 'triangle';
+                osc.frequency.setValueAtTime(1200, now);
+                osc.frequency.setValueAtTime(1800, now + 0.05);
+                gain.gain.setValueAtTime(0.5, now);
+                gain.gain.linearRampToValueAtTime(0.01, now + 0.1);
+                osc.start(now); osc.stop(now + 0.1); break;
+            case 'powerup':
+                osc.type = 'square';
+                osc.frequency.setValueAtTime(200, now);
+                osc.frequency.linearRampToValueAtTime(600, now + 0.3);
+                gain.gain.setValueAtTime(0.5, now);
+                gain.gain.linearRampToValueAtTime(0.01, now + 0.4);
+                osc.start(now); osc.stop(now + 0.4); break;
+            case 'damage':
+                osc.type = 'sawtooth';
+                osc.frequency.setValueAtTime(150, now);
+                osc.frequency.exponentialRampToValueAtTime(50, now + 0.3);
+                gain.gain.setValueAtTime(0.8, now);
+                gain.gain.exponentialRampToValueAtTime(0.01, now + 0.3);
+                osc.start(now); osc.stop(now + 0.3); break;
+            case 'clock':
+                osc.type = 'sine';
+                osc.frequency.setValueAtTime(880, now);
+                osc.frequency.setValueAtTime(1320, now + 0.08);
+                osc.frequency.setValueAtTime(1760, now + 0.16);
+                gain.gain.setValueAtTime(0.5, now);
+                gain.gain.linearRampToValueAtTime(0.01, now + 0.25);
+                osc.start(now); osc.stop(now + 0.25); break;
+            case 'star':
+                osc.type = 'square';
+                osc.frequency.setValueAtTime(523, now);
+                osc.frequency.setValueAtTime(659, now + 0.08);
+                osc.frequency.setValueAtTime(784, now + 0.16);
+                osc.frequency.setValueAtTime(1046, now + 0.24);
+                gain.gain.setValueAtTime(0.5, now);
+                gain.gain.linearRampToValueAtTime(0.01, now + 0.35);
+                osc.start(now); osc.stop(now + 0.35); break;
+            case 'goal':
+                this._fanfare(now); break;
+        }
+    }
+
+    _fanfare(now) {
+        const notes = [523, 659, 784, 1046, 1318];
+        notes.forEach((f, i) => {
+            const o = this.ctx.createOscillator();
+            const g = this.ctx.createGain();
+            o.connect(g); g.connect(this.masterGain);
+            o.type = 'square';
+            const t = now + i * 0.12;
+            o.frequency.setValueAtTime(f, t);
+            g.gain.setValueAtTime(0.5, t);
+            g.gain.linearRampToValueAtTime(0.01, t + 0.18);
+            o.start(t); o.stop(t + 0.18);
+        });
+    }
+
+    // --- BGM（ステージ別チップチューン） ---
+    // 各曲は音階配列。状態（通常/スピードアップ/スピードダウン/無敵）に応じて
+    // テンポや音色を動的に変えながら再帰再生する。
+    static BGM_TRACKS = {
+        grass: { tempo: 220, wave: 'square',
+            seq: [523,0,659,0,784,659,523,0, 587,0,698,0,880,698,587,0] },
+        fire:  { tempo: 180, wave: 'sawtooth',
+            seq: [440,440,523,0,440,392,440,0, 349,349,440,0,392,0,349,0] },
+        ghost: { tempo: 260, wave: 'triangle',
+            seq: [330,0,392,0,330,0,294,0, 262,0,294,0,330,392,330,0] },
+        city:  { tempo: 160, wave: 'square',
+            seq: [392,392,0,392,523,0,440,0, 349,349,0,349,440,0,392,0] },
+        sky:   { tempo: 200, wave: 'sine',
+            seq: [659,784,880,784,659,587,523,587, 659,880,1046,880,784,659,587,0] },
+        // 無敵スター中の専用テーマ（明るく華やか）
+        star:  { tempo: 110, wave: 'square',
+            seq: [784,880,1046,1318,1046,880,784,659, 784,880,1046,1318,1568,1318,1046,880] },
+    };
+
+    // 状態タイプごとのテンポ倍率・音色上書き
+    static BGM_MODIFIERS = {
+        normal: { tempoMul: 1.0,  wave: null },
+        fast:   { tempoMul: 0.55, wave: null },        // タイヤ：スピードアップ
+        slow:   { tempoMul: 1.9,  wave: 'sine' },      // とろ床：スピードダウン
+        star:   { tempoMul: 1.0,  wave: null, track: 'star' }, // 無敵：専用曲
+    };
+
+    // key: ステージのベース曲キー, stageTempoMul: 難易度によるテンポ倍率
+    startBgm(key, stageTempoMul = 1) {
+        this.bgmKey = key;
+        this.bgmStageTempoMul = stageTempoMul;
+        this.bgmModifier = 'normal';
+        this.bgmStep = 0;
+        if (!this.enabled || !this.ctx) return;
+        if (this.bgmTimer) return; // 既にループ中ならテイク継続（次ティックで状態反映）
+        this._scheduleBgmTick();
+    }
+
+    // 再生中のBGMの状態（テンポ・曲）を切り替える
+    setBgmModifier(type) {
+        if (this.bgmModifier === type) return;
+        this.bgmModifier = type;
+        // トラックが切り替わる場合はステップをリセットして曲頭から
+        this.bgmStep = 0;
+    }
+
+    _scheduleBgmTick() {
+        const mod = SoundManager.BGM_MODIFIERS[this.bgmModifier] || SoundManager.BGM_MODIFIERS.normal;
+        const trackKey = mod.track || this.bgmKey;
+        const track = SoundManager.BGM_TRACKS[trackKey];
+        if (!track) { this.bgmTimer = null; return; }
+
+        const interval = Math.max(60, Math.round(track.tempo * this.bgmStageTempoMul * mod.tempoMul));
+        this._bgmTick(track, interval, mod.wave);
+
+        this.bgmTimer = setTimeout(() => this._scheduleBgmTick(), interval);
+    }
+
+    _bgmTick(track, interval, waveOverride) {
+        if (!this.ctx) return;
+        const freq = track.seq[this.bgmStep % track.seq.length];
+        this.bgmStep++;
+        if (freq > 0) {
+            const o = this.ctx.createOscillator();
+            const g = this.ctx.createGain();
+            o.connect(g); g.connect(this.bgmGain);
+            o.type = waveOverride || track.wave;
+            const now = this.ctx.currentTime;
+            o.frequency.setValueAtTime(freq, now);
+            g.gain.setValueAtTime(0.4, now);
+            g.gain.linearRampToValueAtTime(0.01, now + interval / 1000 * 0.9);
+            o.start(now); o.stop(now + interval / 1000);
+        }
+    }
+
+    stopBgm() {
+        if (this.bgmTimer) { clearTimeout(this.bgmTimer); this.bgmTimer = null; }
+        this.bgmKey = null;
+        this.bgmModifier = 'normal';
+    }
+
+    // --- ゴール演出中のジングル（サマリー表示中ループ） ---
+    startGoalJingle() {
+        if (!this.enabled || !this.ctx) return;
+        if (this.goalJingleTimer) return;
+        this.goalJingleStep = 0;
+        this._scheduleGoalJingle();
+    }
+
+    _scheduleGoalJingle() {
+        if (!this.ctx) return;
+        const seq = [1046, 0, 1318, 0, 1568, 0, 1318, 0]; // ゆったりキラキラ
+        const interval = 260;
+        const freq = seq[this.goalJingleStep % seq.length];
+        this.goalJingleStep++;
+        if (freq > 0) {
+            const o = this.ctx.createOscillator();
+            const g = this.ctx.createGain();
+            o.connect(g); g.connect(this.bgmGain);
+            o.type = 'triangle';
+            const now = this.ctx.currentTime;
+            o.frequency.setValueAtTime(freq, now);
+            g.gain.setValueAtTime(0.35, now);
+            g.gain.linearRampToValueAtTime(0.01, now + interval / 1000 * 0.9);
+            o.start(now); o.stop(now + interval / 1000);
+        }
+        this.goalJingleTimer = setTimeout(() => this._scheduleGoalJingle(), interval);
+    }
+
+    stopGoalJingle() {
+        if (this.goalJingleTimer) { clearTimeout(this.goalJingleTimer); this.goalJingleTimer = null; }
+    }
+}
+const soundManager = new SoundManager();
+
+// =====================================================================
+// 3. Ranking Manager
+// =====================================================================
+
+class RankingManager {
+    constructor() {
+        this.storageKey = 'piyo_runner_v2_ranking';
+        this.limit = 100;
+    }
+    load() {
+        try {
+            const d = localStorage.getItem(this.storageKey);
+            return d ? JSON.parse(d) : [];
+        } catch (e) { console.error('Ranking load error', e); return []; }
+    }
+    save(score, stage) {
+        let ranks = this.load();
+        const now = new Date();
+        const dateStr = `${now.getMonth() + 1}/${now.getDate()} ` +
+                        `${now.getHours()}:${String(now.getMinutes()).padStart(2, '0')}`;
+        const entry = { score: Math.floor(score), stage: stage, date: dateStr, id: Date.now() };
+        ranks.push(entry);
+        ranks.sort((a, b) => b.score - a.score);
+        if (ranks.length > this.limit) ranks = ranks.slice(0, this.limit);
+        localStorage.setItem(this.storageKey, JSON.stringify(ranks));
+        const myRank = ranks.findIndex(r => r.id === entry.id) + 1;
+        return { myRank: myRank > 0 ? myRank : -1, list: ranks, currentId: entry.id };
+    }
+}
+const rankingManager = new RankingManager();
+// =====================================================================
+// 4. UI
+// =====================================================================
+
+const UI = {
+    el: {},
+    init() {
+        const ids = [
+            'stage-label', 'time-bar', 'time-text', 'score-board',
+            'progress-runner', 'bubbu-msg', 'stun-msg', 'effect-toast', 'damage-flash',
+            'effect-overlay', 'overlay', 'title-text', 'instructions',
+            'speed-selector', 'ranking-board', 'ranking-list', 'result-area',
+            'final-score', 'start-buttons', 'start-sound-on', 'start-sound-off',
+            'retry-btn', 'goal-banner', 'goal-bonus', 'goal-score-before',
+            'goal-score-total', 'goal-next-btn', 'stage-intro',
+            'si-stage', 'si-name'
+        ];
+        ids.forEach(id => { this.el[id] = document.getElementById(id); });
+    },
+    show(id) { this.el[id].classList.remove('hidden'); },
+    hide(id) { this.el[id].classList.add('hidden'); },
+
+    refreshStatus() {
+        this.el['score-board'].innerText = Math.floor(gameState.score);
+        this.el['stage-label'].innerText = 'STAGE ' + gameState.stage;
+    },
+
+    refreshTime() {
+        const sec = Math.max(0, gameState.timeLeftMs / 1000);
+        const ratio = Math.max(0, Math.min(1, gameState.timeLeftMs / (gameState.stageTimeSec * 1000)));
+        this.el['time-bar'].style.width = (ratio * 100) + '%';
+        this.el['time-text'].innerText = sec.toFixed(1);
+        if (sec <= 10) this.el['time-bar'].classList.add('warning');
+        else this.el['time-bar'].classList.remove('warning');
+    },
+
+    refreshProgress() {
+        const ratio = Math.max(0, Math.min(1, gameState.distance / gameState.goalDistance));
+        this.el['progress-runner'].style.left = (ratio * 100) + '%';
+    },
+
+    showBubbu() {
+        const el = this.el['bubbu-msg'];
+        el.classList.add('show');
+        setTimeout(() => el.classList.remove('show'), 800);
+    },
+    showStun() {
+        const el = this.el['stun-msg'];
+        el.classList.add('show');
+        setTimeout(() => el.classList.remove('show'), CONFIG.STUN_DURATION_MS - 100);
+    },
+
+    // type: 'plus'(緑) | 'minus'(紫) | 'bonus'(オレンジ)
+    showEffectToast(text, type) {
+        const el = this.el['effect-toast'];
+        el.classList.remove('show', 'plus', 'minus', 'bonus');
+        // 再アニメーションのため一旦リフロー
+        void el.offsetWidth;
+        el.innerText = text;
+        el.classList.add(type, 'show');
+        if (this._toastTimer) clearTimeout(this._toastTimer);
+        this._toastTimer = setTimeout(() => el.classList.remove('show'), 900);
+    },
+
+    flashScreen() {
+        const flash = this.el['damage-flash'];
+        flash.style.opacity = 0.5;
+        setTimeout(() => { flash.style.opacity = 0; }, 100);
+    },
+
+    setOverlayEffect(type) {
+        const el = this.el['effect-overlay'];
+        if (type === 'blue')      { el.style.backgroundColor = 'rgba(0, 0, 255, 0.1)'; el.style.opacity = 1; }
+        else if (type === 'gold') { el.style.backgroundColor = 'rgba(255, 215, 0, 0.18)'; el.style.opacity = 1; }
+        else if (type === 'purple'){ el.style.backgroundColor = 'rgba(120, 60, 180, 0.2)'; el.style.opacity = 1; }
+        else { el.style.opacity = 0; }
+    },
+
+    showGoalBanner(scoreBefore, bonus) {
+        this.el['goal-score-before'].innerText = Math.floor(scoreBefore).toLocaleString();
+        this.el['goal-bonus'].innerText = '+' + Math.floor(bonus).toLocaleString();
+        this.el['goal-score-total'].innerText = Math.floor(scoreBefore + bonus).toLocaleString();
+        this.el['goal-banner'].classList.add('show');
+    },
+    hideGoalBanner() {
+        this.el['goal-banner'].classList.remove('show');
+    },
+
+    showStageIntro(stageNum, name) {
+        this.el['si-stage'].innerText = 'STAGE ' + stageNum;
+        this.el['si-name'].innerText = name;
+        const intro = this.el['stage-intro'];
+        intro.classList.add('show');
+        setTimeout(() => intro.classList.remove('show'), 1500);
+    }
+};
+
+// =====================================================================
+// 5. ヘルパー
+// =====================================================================
+
+function laneToZ(lane) {
+    const centerOffset = (CONFIG.LANE_COUNT - 1) * CONFIG.LANE_WIDTH / 2;
+    return (lane * CONFIG.LANE_WIDTH) - centerOffset;
+}
+function isTireActive() { return gameState.tireEndTime > Date.now(); }
+function isFloorSlowActive() { return gameState.floorSlowEndTime > Date.now(); }
+function isStarActive() { return gameState.starEndTime > Date.now(); }
+function isElectricStunned() { return gameState.stunEndTime > Date.now(); }
+function isStunned() { return isElectricStunned() || (piyo && piyo.falling); }
+
+function createEmojiTexture(emoji, size) {
+    const canvas = document.createElement('canvas');
+    canvas.width = size; canvas.height = size;
+    const ctx = canvas.getContext('2d');
+    ctx.clearRect(0, 0, size, size);
+    ctx.font = `${size * 0.8}px serif`;
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    ctx.fillText(emoji, size / 2, size / 2 + size * 0.1);
+    const tex = new THREE.CanvasTexture(canvas);
+    tex.minFilter = THREE.LinearFilter;
+    return tex;
+}
+
+// =====================================================================
+// 6. Particle System
+// =====================================================================
+
+class ParticleSystem {
+    constructor() {
+        this.particles = []; this.pool = [];
+        this.meshGroup = new THREE.Group();
+        scene.add(this.meshGroup);
+        this.planeGeo = new THREE.PlaneGeometry(2.0, 2.0);
+        this.matCache = {};
+    }
+    getMaterial(name) {
+        if (!this.matCache[name]) {
+            this.matCache[name] = new THREE.MeshBasicMaterial({
+                map: textureMap[name], transparent: true,
+                side: THREE.DoubleSide, depthWrite: false
+            });
+        }
+        return this.matCache[name];
+    }
+    emit(position, type) {
+        let p = this.pool.pop();
+        if (!p) {
+            const mesh = new THREE.Mesh(this.planeGeo, this.getMaterial(type));
+            this.meshGroup.add(mesh);
+            p = { mesh, life: 0, active: false };
+        }
+        p.mesh.material = this.getMaterial(type);
+        p.mesh.position.copy(position);
+        p.mesh.position.y += 1.0;
+        p.mesh.visible = true;
+        p.mesh.scale.setScalar(0.5);
+        p.mesh.rotation.z = (Math.random() - 0.5);
+        p.mesh.lookAt(camera.position);
+        p.life = 1.0; p.active = true;
+        this.particles.push(p);
+    }
+    update() {
+        for (let i = this.particles.length - 1; i >= 0; i--) {
+            const p = this.particles[i];
+            if (!p.active) continue;
+            p.life -= 0.08;
+            p.mesh.scale.setScalar(0.5 + (1.0 - p.life) * 1.5);
+            p.mesh.material.opacity = p.life;
+            p.mesh.position.y += 0.05;
+            if (p.life <= 0) {
+                p.active = false; p.mesh.visible = false;
+                this.pool.push(p); this.particles.splice(i, 1);
+            }
+        }
+    }
+    reset() {
+        this.particles.forEach(p => { p.active = false; p.mesh.visible = false; this.pool.push(p); });
+        this.particles = [];
+    }
+}
+
+// =====================================================================
+// 7. Piyo
+// =====================================================================
+
+class Piyo {
+    constructor() {
+        this.mesh = new THREE.Group();
+        this._buildModel();
+        scene.add(this.mesh);
+        this.reset();
+    }
+
+    _buildModel() {
+        const bodyMat = new THREE.MeshLambertMaterial({ color: COLORS.PIYO_BODY });
+        this.body = new THREE.Mesh(new THREE.SphereGeometry(0.6, 8, 6), bodyMat);
+        this.mesh.add(this.body);
+        this.head = new THREE.Mesh(new THREE.SphereGeometry(0.5, 8, 6), bodyMat);
+        this.head.position.set(0.4, 0.7, 0);
+        this.mesh.add(this.head);
+
+        const beakMat = new THREE.MeshLambertMaterial({ color: COLORS.PIYO_BEAK });
+        this.beak = new THREE.Mesh(new THREE.ConeGeometry(0.15, 0.4, 4), beakMat);
+        this.beak.rotation.z = -Math.PI / 2;
+        this.beak.position.set(0.9, 0.7, 0);
+        this.mesh.add(this.beak);
+
+        const eyeGeo = new THREE.SphereGeometry(0.06, 4, 4);
+        const eyeMat = new THREE.MeshBasicMaterial({ color: COLORS.PIYO_EYE });
+        this.eyeL = new THREE.Mesh(eyeGeo, eyeMat);
+        this.eyeL.position.set(0.75, 0.85, 0.25); this.mesh.add(this.eyeL);
+        this.eyeR = new THREE.Mesh(eyeGeo, eyeMat);
+        this.eyeR.position.set(0.75, 0.85, -0.25); this.mesh.add(this.eyeR);
+
+        const wingGeo = new THREE.SphereGeometry(0.4, 6, 4);
+        wingGeo.scale(1, 0.5, 0.2);
+        const wingL = new THREE.Mesh(wingGeo, bodyMat);
+        wingL.position.set(0, 0.2, 0.5); wingL.rotation.y = -0.3; this.mesh.add(wingL);
+        const wingR = new THREE.Mesh(wingGeo, bodyMat);
+        wingR.position.set(0, 0.2, -0.5); wingR.rotation.y = 0.3; this.mesh.add(wingR);
+
+        const shadowMat = new THREE.MeshBasicMaterial({ color: 0x000000, transparent: true, opacity: 0.3 });
+        this.fakeShadow = new THREE.Mesh(new THREE.CircleGeometry(0.5, 8), shadowMat);
+        this.fakeShadow.rotation.x = -Math.PI / 2;
+        this.fakeShadow.position.y = -0.55;
+        this.mesh.add(this.fakeShadow);
+
+        // 無敵スター用オーラ
+        const auraMat = new THREE.MeshBasicMaterial({ color: 0xFFD700, transparent: true, opacity: 0.35, side: THREE.DoubleSide });
+        this.aura = new THREE.Mesh(new THREE.SphereGeometry(0.95, 10, 8), auraMat);
+        this.aura.visible = false;
+        this.mesh.add(this.aura);
+
+        this.tireGroup = new THREE.Group();
+        this.tireGroup.visible = false;
+        const tireGeo = new THREE.CylinderGeometry(0.4, 0.4, 0.3, 8);
+        tireGeo.rotateX(Math.PI / 2);
+        const tireMat = new THREE.MeshLambertMaterial({ color: COLORS.TIRE });
+        const tireL = new THREE.Mesh(tireGeo, tireMat); tireL.position.set(0, 0, 0.8);
+        const tireR = new THREE.Mesh(tireGeo, tireMat); tireR.position.set(0, 0, -0.8);
+        this.tireGroup.add(tireL); this.tireGroup.add(tireR);
+        this.mesh.add(this.tireGroup);
+    }
+
+    reset() {
+        this.lane = 1;
+        this.mesh.position.set(-4, 1, laneToZ(this.lane));
+        this.yVelocity = 0;
+        this.isJumping = false;
+        this.isFloating = false;
+        this.invincibleTimer = 0;
+        this.mesh.visible = true;
+        this.onHole = false;
+        this.falling = false;
+        this.respawning = false;
+        this.mesh.rotation.set(0, 0, 0);
+        this.tireGroup.visible = false;
+        this.aura.visible = false;
+        this.head.material.color.setHex(COLORS.PIYO_BODY);
+        this.body.material.color.setHex(COLORS.PIYO_BODY);
+    }
+
+    moveLane(direction) {
+        if (!gameState.isPlaying || this.falling || this.respawning || isStunned()) return;
+        this.lane = Math.max(0, Math.min(CONFIG.LANE_COUNT - 1, this.lane + direction));
+    }
+
+    jump(forceType = 'normal') {
+        if (!gameState.isPlaying || this.falling || this.respawning || isStunned()) return;
+        if (!this.isJumping || forceType === 'long') {
+            soundManager.playTone('jump');
+            this.isJumping = true;
+            if (forceType === 'long') { this.yVelocity = CONFIG.LONG_JUMP_FORCE; this.isFloating = true; }
+            else { this.yVelocity = CONFIG.JUMP_FORCE; this.isFloating = false; }
+        }
+    }
+
+    activateTire() {
+        gameState.tireEndTime = Date.now() + CONFIG.TIRE_DURATION_MS;
+        this.tireGroup.visible = true;
+        soundManager.playTone('powerup');
+    }
+
+    activateStar() {
+        gameState.starEndTime = Date.now() + CONFIG.STAR_DURATION_MS;
+        this.aura.visible = true;
+        soundManager.playTone('star');
+        UI.setOverlayEffect('gold');
+    }
+
+    _clearTire() {
+        if (gameState.tireEndTime > 0) {
+            gameState.tireEndTime = 0;
+            this.tireGroup.visible = false;
+        }
+    }
+
+    // 障害物被弾 → しびれて停止（時間ロス）
+    getStunned() {
+        if (this.invincibleTimer > 0 || isStarActive() || isStunned() ||
+            this.falling || this.respawning) return;
+        gameState.stunEndTime = Date.now() + CONFIG.STUN_DURATION_MS;
+        UI.flashScreen();
+        UI.showStun();
+        soundManager.playTone('damage');
+        particleSystem.emit(this.mesh.position, 'impact');
+        this.setInvincible(CONFIG.INVINCIBLE_HIT);
+        this._clearTire();
+    }
+
+    // 穴落下 → そのステージの即終了（ゴール失敗扱いのしびれ）
+    handleFall() {
+        if (this.falling || this.respawning || isStarActive()) return;
+        this.falling = true;
+        UI.flashScreen();
+        UI.showBubbu();
+        soundManager.playTone('damage');
+        // 穴落ちは大きめのロス：3秒分の時間を失う＋しびれ
+        gameState.timeLeftMs -= 3000;
+        this.respawning = true;
+        this._clearTire();
+        setTimeout(() => {
+            if (!gameState.isPlaying) return;
+            this.respawn();
+        }, 1200);
+    }
+
+    respawn() {
+        this.falling = false;
+        this.mesh.position.y = 12;
+        this.mesh.position.z = laneToZ(this.lane);
+        this.mesh.rotation.set(0, 0, 0);
+        this.mesh.visible = true;
+        this.yVelocity = 0;
+        this.isJumping = true;
+        this.onHole = false;
+        this.isFloating = false;
+        this.setInvincible(120);
+        setTimeout(() => { this.respawning = false; }, 500);
+    }
+
+    addTime(sec) {
+        gameState.timeLeftMs += sec * 1000;
+        const maxMs = gameState.stageTimeSec * 1000;
+        if (gameState.timeLeftMs > maxMs) {
+            gameState.timeLeftMs = maxMs;
+        }
+        this.head.material.emissive.setHex(0x004400);
+        setTimeout(() => { this.head.material.emissive.setHex(0x000000); }, 200);
+    }
+
+    setInvincible(t) { this.invincibleTimer = t; }
+
+    update() {
+        const tire = isTireActive();
+        const star = isStarActive();
+        const stunned = isStunned();          // スクロール停止全般（電気しびれ＋落下中）
+        const electric = isElectricStunned(); // ビリビリ演出用
+
+        // レーン移動（しびれ中は動けない）
+        if (!stunned) {
+            this.targetZ = laneToZ(this.lane);
+            this.mesh.position.z += (this.targetZ - this.mesh.position.z) * CONFIG.LANE_LERP;
+        }
+
+        // しびれ演出（ビリビリ振動）：落下中は通常のX位置のまま
+        if (electric) {
+            this.mesh.position.x = -4 + (Math.random() - 0.5) * 0.25;
+            this.mesh.rotation.z = (Math.random() - 0.5) * 0.3;
+        } else if (tire) {
+            this.tireGroup.children.forEach(t => t.rotation.x -= 0.5);
+            this.mesh.position.x = -4 + (Math.random() - 0.5) * 0.1;
+        } else if (!this.falling) {
+            this.mesh.position.x = -4;
+        }
+
+        // スターオーラ
+        this.aura.visible = star;
+        if (star) {
+            const hue = (gameState.frameCount * 8) % 360;
+            this.aura.material.color.setHSL(hue / 360, 1, 0.6);
+            this.aura.material.opacity = 0.25 + Math.sin(gameState.frameCount * 0.3) * 0.1;
+        }
+
+        this._updateShadow();
+        this._updateVertical(stunned, tire);
+        this._updateInvincibleBlink(star);
+    }
+
+    _updateShadow() {
+        this.fakeShadow.position.x = 0; this.fakeShadow.position.z = 0;
+        const dist = Math.abs(this.mesh.position.y - 1);
+        this.fakeShadow.scale.setScalar(Math.max(0, 1 - dist * 0.15));
+        this.fakeShadow.material.opacity = Math.max(0, 0.3 - dist * 0.05);
+        if (this.onHole && !this.isJumping) this.fakeShadow.visible = false;
+        else { this.fakeShadow.visible = true; this.fakeShadow.position.y = -this.mesh.position.y + 0.05; }
+    }
+
+    _updateVertical(stunned, tire) {
+        if (this.isJumping) {
+            this.mesh.position.y += this.yVelocity;
+            const g = this.isFloating ? CONFIG.FLOAT_GRAVITY : CONFIG.GRAVITY;
+            this.yVelocity -= g;
+            if (this.isFloating) this.mesh.rotation.z -= 0.15;
+            else this.mesh.rotation.z += (0 - this.mesh.rotation.z) * 0.1;
+            if (this.mesh.position.y <= 1 && !this.onHole && !this.falling) {
+                this.mesh.position.y = 1; this.isJumping = false;
+                this.isFloating = false; this.yVelocity = 0; this.mesh.rotation.z = 0;
+            }
+        } else {
+            this.bounceOffset = (this.bounceOffset || 0) + (stunned ? 0 : 0.3);
+            if (!this.onHole && this.mesh.position.y > -1.0) {
+                if (tire || stunned) this.mesh.position.y = 1;
+                else {
+                    this.mesh.position.y = 1 + Math.abs(Math.sin(this.bounceOffset)) * 0.15;
+                    if (!stunned) this.mesh.rotation.z = Math.sin(this.bounceOffset) * 0.05;
+                }
+            } else {
+                this.mesh.position.y -= 0.3;
+                this.mesh.rotation.z += 0.2;
+                if (this.mesh.position.y < -5 && !this.falling) this.handleFall();
+            }
+        }
+    }
+
+    _updateInvincibleBlink(star) {
+        if (this.invincibleTimer <= 0) return;
+        this.invincibleTimer--;
+        if (!this.respawning && !star) {
+            this.mesh.visible = Math.floor(this.invincibleTimer / 5) % 2 === 0;
+            if (this.invincibleTimer === 0) this.mesh.visible = true;
+        } else if (star) {
+            this.mesh.visible = true;
+        }
+    }
+}
+
+// =====================================================================
+// 8. World
+// =====================================================================
+
+class World {
+    constructor() {
+        this.tiles = [];
+        this.tileGroup = new THREE.Group(); scene.add(this.tileGroup);
+        this.sceneryGroup = new THREE.Group(); scene.add(this.sceneryGroup);
+        this.cols = CONFIG.WORLD_COLS;
+        this.holeReservations = new Array(CONFIG.LANE_COUNT).fill(false);
+        this.slowFloorChain = new Array(CONFIG.LANE_COUNT).fill(0); // 連続出現の残りタイル数
+        this._setupScenery();
+        for (let x = 0; x < this.cols; x++)
+            for (let z = 0; z < CONFIG.LANE_COUNT; z++)
+                this._createTile(x, z);
+    }
+
+    _setupScenery() {
+        for (let i = 0; i < 6; i++) {
+            const size = 5 + Math.random() * 5;
+            const mesh = new THREE.Mesh(
+                new THREE.PlaneGeometry(size, size),
+                new THREE.MeshBasicMaterial({ map: textureMap['cloud'], transparent: true,
+                    opacity: 0.8, side: THREE.DoubleSide, depthWrite: false })
+            );
+            mesh.position.set(Math.random() * 80 - 20, 5 + Math.random() * 10, -10 - Math.random() * 10);
+            mesh.userData = { speedRate: 0.05 + Math.random() * 0.1 };
+            this.sceneryGroup.add(mesh);
+        }
+    }
+
+    _createTile(gridX, laneIndex) {
+        const size = CONFIG.TILE_SIZE;
+        const geo = new THREE.BoxGeometry(size, 1, CONFIG.LANE_WIDTH - 0.1);
+        const isEven = (gridX + laneIndex) % 2 === 0;
+        const mesh = new THREE.Mesh(geo, isEven ? matGroundA : matGroundB);
+        const z = laneToZ(laneIndex);
+        const x = CONFIG.TILE_X_START + gridX * size;
+        mesh.position.set(x, -0.5, z);
+        const tileData = { mesh, gridX, lane: laneIndex, type: 'normal' };
+        mesh.userData = tileData;
+        this.tiles.push(tileData);
+        this.tileGroup.add(mesh);
+    }
+
+    // ステージ開始時に地面色を更新
+    applyStageColors(def) {
+        matGroundA.color.setHex(def.groundA);
+        matGroundB.color.setHex(def.groundB);
+        scene.background.setHex(def.sky);
+    }
+
+    reset() {
+        this.holeReservations.fill(false);
+        this.slowFloorChain.fill(0);
+        this.tiles.forEach(t => {
+            t.mesh.position.x = CONFIG.TILE_X_START + t.gridX * CONFIG.TILE_SIZE;
+            this._resetTileType(t);
+        });
+    }
+
+    _resetTileType(tile) {
+        tile.type = 'normal';
+        tile.mesh.visible = true;
+        tile.mesh.rotation.set(0, 0, 0);
+        tile.mesh.position.y = -0.5;
+        const isEven = (tile.gridX + tile.lane) % 2 === 0;
+        tile.mesh.material = isEven ? matGroundA : matGroundB;
+    }
+
+    update() {
+        const speed = currentSpeed;
+        const size = CONFIG.TILE_SIZE;
+        this.sceneryGroup.children.forEach(c => {
+            c.position.x -= speed * c.userData.speedRate;
+            if (c.position.x < -30) c.position.x = 60;
+        });
+        this.tiles.forEach(tile => {
+            tile.mesh.position.x -= speed;
+            if (tile.mesh.position.x < CONFIG.TILE_RECYCLE_X) {
+                tile.mesh.position.x += (this.cols * size);
+                this._resetTileType(tile);
+                // ゴール出現後はギミックを生成しない（クリアしやすく）
+                if (!gameState.goalSpawned) objectManager.spawnObjectOnTile(tile);
+            }
+        });
+    }
+
+    getTileAt(x, z) {
+        return this.tiles.find(t =>
+            Math.abs(t.mesh.position.x - x) < CONFIG.TILE_SIZE / 2 &&
+            Math.abs(t.mesh.position.z - z) < 0.5);
+    }
+}
+
+// =====================================================================
+// 9. GoalGate （ゴールゲート）
+// =====================================================================
+
+class GoalGate {
+    constructor() {
+        this.group = new THREE.Group();
+        const poleMat = new THREE.MeshLambertMaterial({ color: COLORS.GOAL_POLE });
+        const poleGeo = new THREE.CylinderGeometry(0.18, 0.18, 5, 8);
+        const left = new THREE.Mesh(poleGeo, poleMat);
+        left.position.set(0, 2.5, laneToZ(0) - 1);
+        const right = new THREE.Mesh(poleGeo, poleMat);
+        right.position.set(0, 2.5, laneToZ(CONFIG.LANE_COUNT - 1) + 1);
+        this.group.add(left); this.group.add(right);
+
+        const barGeo = new THREE.BoxGeometry(0.3, 0.5, (CONFIG.LANE_COUNT) * CONFIG.LANE_WIDTH + 2);
+        const bar = new THREE.Mesh(barGeo, new THREE.MeshLambertMaterial({ color: COLORS.GOAL_FLAG }));
+        bar.position.set(0, 5, 0);
+        this.group.add(bar);
+
+        // GOAL看板（横バーの少し上、正面から見えるように配置）
+        const board = new THREE.Mesh(
+            new THREE.PlaneGeometry(4.5, 1.4),
+            new THREE.MeshBasicMaterial({ map: textureMap['goal'], transparent: true, side: THREE.DoubleSide })
+        );
+        board.position.set(0, 6.2, 0);
+        this.group.add(board);
+
+        this.group.visible = false;
+        scene.add(this.group);
+    }
+
+    spawn() {
+        this.group.position.x = 25; // 右奥から流れてくる（近めにして到達を早める）
+        this.group.visible = true;
+        this.reached = false;
+    }
+
+    hide() { this.group.visible = false; }
+
+    update() {
+        if (!this.group.visible) return;
+        this.group.position.x -= currentSpeed;
+        // ぴよのX(-4)を通過したらゴール
+        if (!this.reached && this.group.position.x <= -4) {
+            this.reached = true;
+            onGoalReached();
+        }
+    }
+}
+// =====================================================================
+// 10. Object Manager
+// =====================================================================
+
+class ObjectManager {
+    constructor() {
+        this.objects = []; this.pool = [];
+        this.objGroup = new THREE.Group(); scene.add(this.objGroup);
+    }
+    reset() {
+        this.objects.forEach(o => { o.mesh.visible = false; this.pool.push(o); });
+        this.objects = [];
+    }
+    activeCount() { return this.objects.filter(o => o.active).length; }
+
+    _createBoardMesh(name, scale = 1.0) {
+        return new THREE.Mesh(
+            new THREE.PlaneGeometry(2 * scale, 2 * scale),
+            new THREE.MeshBasicMaterial({ map: textureMap[name], transparent: true, alphaTest: 0.5, side: THREE.DoubleSide })
+        );
+    }
+
+    createMesh(type) {
+        let mesh;
+        switch (type) {
+            case 'fire':    mesh = this._createBoardMesh('fire', 1.0); break;
+            case 'cake':    mesh = this._createBoardMesh('cake', 0.8); break;
+            case 'onigiri': mesh = this._createBoardMesh('onigiri', 0.8); break;
+            case 'clock':   mesh = this._createBoardMesh('clock', 0.85); break;
+            case 'star':    mesh = this._createBoardMesh('star', 0.9); break;
+            case 'tire': {
+                // フィールド上では「車」の見た目。取るとぴよにタイヤが付く。
+                const group = new THREE.Group();
+                const bodyMat = new THREE.MeshLambertMaterial({ color: COLORS.CAR_BODY });
+                const darkMat = new THREE.MeshLambertMaterial({ color: COLORS.CAR_BODY_DARK });
+                const winMat  = new THREE.MeshLambertMaterial({ color: COLORS.CAR_WINDOW });
+
+                const body = new THREE.Mesh(new THREE.BoxGeometry(1.6, 0.5, 0.9), bodyMat);
+                group.add(body);
+                const cabin = new THREE.Mesh(new THREE.BoxGeometry(0.8, 0.4, 0.85), winMat);
+                cabin.position.set(0, 0.45, 0);
+                group.add(cabin);
+                const bumperF = new THREE.Mesh(new THREE.BoxGeometry(0.2, 0.5, 0.95), darkMat);
+                bumperF.position.set(0.8, 0, 0);
+                group.add(bumperF);
+                const bumperB = new THREE.Mesh(new THREE.BoxGeometry(0.2, 0.5, 0.95), darkMat);
+                bumperB.position.set(-0.8, 0, 0);
+                group.add(bumperB);
+
+                const wheelGeo = new THREE.CylinderGeometry(0.25, 0.25, 0.2, 8);
+                wheelGeo.rotateX(Math.PI / 2);
+                const wheelMat = new THREE.MeshLambertMaterial({ color: COLORS.TIRE });
+                const wheelPositions = [
+                    [0.55, -0.25, 0.5], [0.55, -0.25, -0.5],
+                    [-0.55, -0.25, 0.5], [-0.55, -0.25, -0.5]
+                ];
+                wheelPositions.forEach(([x, y, z]) => {
+                    const w = new THREE.Mesh(wheelGeo, wheelMat);
+                    w.position.set(x, y, z);
+                    group.add(w);
+                });
+                mesh = group;
+                break;
+            }
+            case 'moving_block': {
+                const group = new THREE.Group();
+                const matBase = new THREE.MeshLambertMaterial({ color: COLORS.BLOCK });
+                const matDark = new THREE.MeshLambertMaterial({ color: COLORS.BLOCK_DARK });
+                const block = new THREE.Mesh(new THREE.BoxGeometry(1.8, 1.8, 2.4),
+                    [matBase, matBase, matDark, matDark, matBase, matBase]);
+                group.add(block);
+                const shadow = new THREE.Mesh(new THREE.PlaneGeometry(1.8, 2.4),
+                    new THREE.MeshBasicMaterial({ color: 0x000000, transparent: true, opacity: 0.3 }));
+                shadow.rotation.x = -Math.PI / 2; shadow.name = 'blockShadow';
+                group.add(shadow); mesh = group; break;
+            }
+            case 'ghost_sign': {
+                const group = new THREE.Group();
+                const stick = new THREE.Mesh(new THREE.CylinderGeometry(0.1, 0.1, 10, 4),
+                    new THREE.MeshLambertMaterial({ color: COLORS.STICK }));
+                stick.position.y = 4; stick.position.z = -0.1; group.add(stick);
+                const board = this._createBoardMesh('ghost', 1.2);
+                board.position.y = 9; group.add(board); mesh = group; break;
+            }
+        }
+        if (mesh) this.objGroup.add(mesh);
+        return mesh;
+    }
+
+    spawnObjectOnTile(tile) {
+        if (this.activeCount() >= CONFIG.MAX_OBJECTS) return;
+        const def = getStageDef(gameState.stage);
+        const w = def.weights;
+
+        // 連続穴予約
+        if (world.holeReservations[tile.lane]) {
+            tile.type = 'hole'; tile.mesh.visible = false;
+            world.holeReservations[tile.lane] = false; return;
+        }
+
+        // 遅くなる床の連続出現中なら最優先で敷く
+        if (world.slowFloorChain[tile.lane] > 0) {
+            tile.type = 'slow_floor'; tile.mesh.material = matSlowFloor;
+            tile.mesh.position.y = -0.35;
+            world.slowFloorChain[tile.lane]--;
+            return;
+        }
+
+        const rand = Math.random();
+
+        // 穴（ステージ重みで確率変動）
+        if (rand < 0.02 * w.hole) {
+            tile.type = 'hole'; tile.mesh.visible = false;
+            if (Math.random() < 0.5) world.holeReservations[tile.lane] = true;
+            return;
+        }
+        // バネ
+        if (rand < 0.02 * w.hole + 0.03 * w.spring) {
+            tile.type = 'spring'; tile.mesh.material = matSpring;
+            tile.mesh.rotation.z = 0.3; tile.mesh.position.y = 0; return;
+        }
+        // 遅くなる床（出現したら3〜5タイル連続で同レーンに敷く）
+        if (rand < 0.02 * w.hole + 0.03 * w.spring + 0.02 * w.slow_floor) {
+            tile.type = 'slow_floor'; tile.mesh.material = matSlowFloor;
+            tile.mesh.position.y = -0.35;
+            world.slowFloorChain[tile.lane] = 2 + Math.floor(Math.random() * 3); // 残り2〜4枚
+            return;
+        }
+
+        // アイテム/障害物（15%枠）
+        if (rand < 0.20) {
+            const type = this._pickWeightedType(w);
+            if (!type) return;
+
+            // 炎は隣レーンとセット出現（ステージ重みが高いほど）
+            if (type === 'fire' && Math.random() < 0.3 && tile.lane < CONFIG.LANE_COUNT - 1) {
+                this.spawnSingle('fire', tile.mesh.position.x, tile.mesh.position.z);
+                if (this.activeCount() < CONFIG.MAX_OBJECTS)
+                    this.spawnSingle('fire', tile.mesh.position.x, tile.mesh.position.z + CONFIG.LANE_WIDTH);
+                return;
+            }
+            this.spawnSingle(type, tile.mesh.position.x, tile.mesh.position.z);
+        }
+    }
+
+    // ステージ重みに基づく抽選
+    _pickWeightedType(w) {
+        const obsMul = getObstacleMul(gameState.stage);
+        const entries = [
+            ['fire', w.fire * obsMul],
+            ['moving_block', w.moving_block * obsMul],
+            ['ghost_sign', w.ghost_sign * obsMul],
+            ['cake', w.cake],
+            ['onigiri', w.onigiri],
+            ['clock', w.clock],
+            ['star', w.star],
+            ['tire', w.tire],
+        ].filter(e => e[1] > 0);
+
+        const total = entries.reduce((s, e) => s + e[1], 0);
+        if (total <= 0) return null;
+        let r = Math.random() * total;
+        for (const [type, weight] of entries) {
+            r -= weight;
+            if (r <= 0) return type;
+        }
+        return entries[entries.length - 1][0];
+    }
+
+    spawnSingle(type, x, z) {
+        let obj = this.pool.find(o => !o.active && o.type === type);
+        if (!obj) { obj = { mesh: this.createMesh(type), type, active: false }; this.objects.push(obj); }
+        else { this.pool = this.pool.filter(o => o !== obj); this.objects.push(obj); }
+        obj.active = true; obj.mesh.visible = true;
+        obj.mesh.position.set(x, 0.5, z); obj.mesh.rotation.set(0, 0, 0);
+        this._applySpawnPose(obj, type);
+    }
+
+    _applySpawnPose(obj, type) {
+        const mesh = obj.mesh;
+        if (FLOATING_TYPES.includes(type)) {
+            mesh.position.y = 1.0;
+        } else if (type === 'tire') {
+            // 車は地面に置く（タイヤ下端がy=0=地面に接するように）
+            mesh.position.y = 0.5;
+        } else if (type === 'fire') {
+            mesh.position.y = 0.8;
+        } else if (type === 'moving_block') {
+            const tiers = [1.2, 3.0, 5.0];
+            const y = tiers[Math.floor(Math.random() * tiers.length)];
+            mesh.position.y = y;
+            mesh.position.z += (Math.random() - 0.5) * (CONFIG.LANE_WIDTH * 0.8);
+            const shadow = mesh.children.find(c => c.name === 'blockShadow');
+            if (shadow) shadow.position.y = -y + 0.05;
+        } else if (type === 'ghost_sign') {
+            mesh.position.y = -12;
+        }
+    }
+
+    update() {
+        const speed = currentSpeed;
+        for (let i = this.objects.length - 1; i >= 0; i--) {
+            const obj = this.objects[i];
+            obj.mesh.position.x -= speed;
+            if (FLOATING_TYPES.includes(obj.type)) {
+                obj.mesh.position.y = 1.0 + Math.sin(gameState.frameCount * 0.1 + obj.mesh.id) * 0.1;
+                if (obj.type === 'star') obj.mesh.rotation.z += 0.05;
+            } else if (obj.type === 'fire') {
+                obj.mesh.lookAt(camera.position);
+            } else if (obj.type === 'ghost_sign') {
+                const t = gameState.frameCount * 0.03 + obj.mesh.id;
+                obj.mesh.position.y = -8 + (Math.sin(t) + 1) / 2 * 8;
+            }
+            if (obj.mesh.position.x < CONFIG.TILE_RECYCLE_X) this.deactivate(obj, i);
+        }
+    }
+
+    deactivate(obj, index) {
+        obj.active = false; obj.mesh.visible = false;
+        this.objects.splice(index, 1); this.pool.push(obj);
+    }
+
+    checkCollision(player) {
+        const pPos = player.mesh.position;
+        for (let i = this.objects.length - 1; i >= 0; i--) {
+            const obj = this.objects[i];
+            const def = OBJECT_DEFS[obj.type];
+            const oPos = obj.mesh.position;
+            if (Math.abs(pPos.x - oPos.x) > def.hitX) continue;
+            if (Math.abs(pPos.z - oPos.z) > def.hitZ) continue;
+            if (obj.type === 'ghost_sign') {
+                if (pPos.y < oPos.y + 10 && pPos.y > oPos.y - 1) this.resolveCollision(player, obj, i);
+                continue;
+            }
+            if (Math.abs(pPos.y - oPos.y) > def.hitY) continue;
+            this.resolveCollision(player, obj, i);
+        }
+    }
+
+    resolveCollision(player, obj, index) {
+        const type = obj.type;
+        if (['cake', 'onigiri', 'clock', 'star', 'tire'].includes(type))
+            particleSystem.emit(obj.mesh.position, 'sparkle');
+
+        switch (type) {
+            case 'cake':
+                soundManager.playTone('coin');
+                gameState.score += CONFIG.SCORE_CAKE; UI.refreshStatus();
+                UI.showEffectToast('+' + CONFIG.SCORE_CAKE, 'bonus');
+                this.deactivate(obj, index); break;
+            case 'onigiri':
+                soundManager.playTone('coin');
+                player.addTime(CONFIG.HEAL_ONIGIRI_SEC);
+                UI.showEffectToast('じかん +' + CONFIG.HEAL_ONIGIRI_SEC + '秒', 'plus');
+                this.deactivate(obj, index); break;
+            case 'clock':
+                soundManager.playTone('clock');
+                player.addTime(CONFIG.CLOCK_BONUS_SEC);
+                UI.showEffectToast('じかん +' + CONFIG.CLOCK_BONUS_SEC + '秒', 'plus');
+                this.deactivate(obj, index); break;
+            case 'star':
+                player.activateStar();
+                UI.showEffectToast('むてき！', 'plus');
+                this.deactivate(obj, index); break;
+            case 'tire':
+                player.activateTire();
+                UI.showEffectToast('スピードアップ！', 'plus');
+                this.deactivate(obj, index); break;
+            case 'fire':
+            case 'moving_block':
+            case 'ghost_sign':
+                if (isStarActive()) {
+                    // 無敵中は障害物を粉砕してボーナス
+                    particleSystem.emit(obj.mesh.position, 'impact');
+                    gameState.score += CONFIG.SCORE_SMASH; UI.refreshStatus();
+                    UI.showEffectToast('+' + CONFIG.SCORE_SMASH, 'bonus');
+                    this.deactivate(obj, index);
+                    return;
+                }
+                if (player.invincibleTimer > 0 || isStunned()) return;
+                particleSystem.emit(obj.mesh.position, 'impact');
+                player.getStunned();
+                this.deactivate(obj, index);
+                break;
+        }
+    }
+}
+
+// =====================================================================
+// 11. Input Manager
+// =====================================================================
+
+class InputManager {
+    constructor() {
+        this.startX = 0; this.startY = 0; this.isTouching = false; this.isPortrait = false;
+        document.addEventListener('touchstart', this.onTouchStart.bind(this), { passive: false });
+        document.addEventListener('touchmove', this.onTouchMove.bind(this), { passive: false });
+        document.addEventListener('touchend', this.onTouchEnd.bind(this), { passive: false });
+        document.addEventListener('mousedown', this.onMouseDown.bind(this));
+        document.addEventListener('mouseup', this.onMouseUp.bind(this));
+    }
+    getTransformedPoint(cx, cy) {
+        if (window.innerHeight > window.innerWidth) { this.isPortrait = true; return { x: cy, y: cx }; }
+        this.isPortrait = false; return { x: cx, y: cy };
+    }
+    onTouchStart(e) {
+        const p = this.getTransformedPoint(e.touches[0].clientX, e.touches[0].clientY);
+        this.startX = p.x; this.startY = p.y; this.isTouching = true;
+    }
+    onTouchMove(e) { if (this.isTouching && gameState.isPlaying) e.preventDefault(); }
+    onTouchEnd(e) {
+        if (!this.isTouching) return;
+        const p = this.getTransformedPoint(e.changedTouches[0].clientX, e.changedTouches[0].clientY);
+        this.handleGesture(this.startX, this.startY, p.x, p.y); this.isTouching = false;
+    }
+    onMouseDown(e) {
+        const p = this.getTransformedPoint(e.clientX, e.clientY);
+        this.startX = p.x; this.startY = p.y; this.isTouching = true;
+    }
+    onMouseUp(e) {
+        if (!this.isTouching) return;
+        const p = this.getTransformedPoint(e.clientX, e.clientY);
+        this.handleGesture(this.startX, this.startY, p.x, p.y); this.isTouching = false;
+    }
+    handleGesture(x1, y1, x2, y2) {
+        if (!gameState.isPlaying) return;
+        const dx = x2 - x1, dy = y2 - y1;
+        if (Math.sqrt(dx * dx + dy * dy) < 30) { piyo.jump('normal'); return; }
+        if (Math.abs(dy) > Math.abs(dx)) {
+            if (this.isPortrait) { if (dy < 0) piyo.moveLane(1); else piyo.moveLane(-1); }
+            else { if (dy < 0) piyo.moveLane(-1); else piyo.moveLane(1); }
+        }
+    }
+}
+
+// =====================================================================
+// 12. ゲームフロー
+// =====================================================================
+
+function startGame(soundEnabled) {
+    soundManager.init(soundEnabled);
+    const speedRadio = document.querySelector('input[name="speed"]:checked');
+    const speedMode = speedRadio ? speedRadio.value : 'low';
+    CONFIG.BASE_SPEED = (speedMode === 'low') ? BASE_SPEED_VAL * CONFIG.LOW_SPEED_RATIO : BASE_SPEED_VAL;
+
+    UI.hide('start-buttons'); UI.hide('speed-selector'); UI.hide('overlay');
+    UI.hide('result-area'); UI.hide('ranking-board'); UI.hide('instructions'); UI.hide('title-text');
+
+    gameState.isPlaying = true;
+    gameState.score = 0;
+    gameState.stage = 1;
+    gameState.frameCount = 0;
+
+    startStage(1);
+}
+
+function startStage(stageNum) {
+    const def = getStageDef(stageNum);
+    gameState.stage = stageNum;
+    gameState.distance = 0;
+    gameState.goalDistance = getGoalDistance(stageNum);
+    gameState.stageTimeSec = getStageTimeSec(stageNum);
+    gameState.timeLeftMs = gameState.stageTimeSec * 1000;
+    gameState.lastTickMs = performance.now();
+    gameState.tireEndTime = 0;
+    gameState.floorSlowEndTime = 0;
+    gameState.starEndTime = 0;
+    gameState.stunEndTime = 0;
+    gameState.goalSpawned = false;
+    gameState.goalReached = false;
+    gameState.transitioning = false;
+
+    // 難易度反映
+    currentSpeed = CONFIG.BASE_SPEED * getDifficultySpeedMul(stageNum);
+
+    world.reset();
+    world.applyStageColors(def);
+    objectManager.reset();
+    particleSystem.reset();
+    goalGate.hide();
+    piyo.reset();
+
+    UI.setOverlayEffect(null);
+    UI.refreshStatus();
+    UI.refreshTime();
+    UI.refreshProgress();
+    UI.showStageIntro(stageNum, def.name);
+
+    soundManager.startBgm(def.bgm, getBgmTempoMul(stageNum));
+}
+
+function onGoalReached() {
+    if (gameState.goalReached) return;
+    gameState.goalReached = true;
+    gameState.transitioning = true;
+
+    soundManager.playTone('goal');
+    soundManager.stopBgm();
+    soundManager.startGoalJingle();
+
+    // スクロール停止
+    currentSpeed = 0;
+
+    // 残り時間ボーナス
+    const scoreBefore = gameState.score;
+    const remainSec = Math.max(0, gameState.timeLeftMs / 1000);
+    const bonus = Math.floor(remainSec * CONFIG.TIME_BONUS_PER_SEC);
+    gameState.score += bonus;
+    UI.refreshStatus();
+    UI.showGoalBanner(scoreBefore, bonus);
+
+    // 紙吹雪
+    for (let i = 0; i < 8; i++) {
+        setTimeout(() => {
+            const p = new THREE.Vector3(
+                piyo.mesh.position.x + (Math.random() - 0.5) * 4,
+                1 + Math.random() * 3,
+                laneToZ(Math.floor(Math.random() * CONFIG.LANE_COUNT))
+            );
+            particleSystem.emit(p, 'sparkle');
+        }, i * 60);
+    }
+
+    // サマリーはボタン押下まで表示したまま（onGoalNextClickedで次へ）
+}
+
+function onGoalNextClicked() {
+    if (!gameState.transitioning) return;
+    if (!gameState.isPlaying) return;
+    soundManager.stopGoalJingle();
+    UI.hideGoalBanner();
+    startStage(gameState.stage + 1);
+}
+
+function gameOver() {
+    gameState.isPlaying = false;
+    soundManager.stopBgm();
+    soundManager.stopGoalJingle();
+    UI.show('overlay'); UI.show('title-text');
+    UI.el['title-text'].innerText = 'GAME OVER';
+    UI.show('result-area');
+    UI.el['final-score'].innerText = Math.floor(gameState.score);
+
+    const rankData = rankingManager.save(gameState.score, gameState.stage);
+    renderRanking(rankData);
+    UI.show('ranking-board');
+    UI.show('retry-btn');
+    UI.el['retry-btn'].innerText = 'もう一度';
+    UI.setOverlayEffect(null);
+}
+
+function renderRanking(rankData) {
+    const listEl = UI.el['ranking-list'];
+    listEl.innerHTML = '';
+    rankData.list.forEach((item, index) => {
+        const li = document.createElement('li');
+        li.className = 'rank-item';
+        if (item.id === rankData.currentId) li.classList.add('current-score');
+        const r = document.createElement('span'); r.className = 'rank-rank'; r.textContent = (index + 1) + '位';
+        const s = document.createElement('span'); s.className = 'rank-score';
+        s.textContent = item.score.toLocaleString() + (item.stage ? ` (S${item.stage})` : '');
+        const d = document.createElement('span'); d.className = 'rank-date'; d.textContent = item.date;
+        li.append(r, s, d); listEl.appendChild(li);
+    });
+    setTimeout(() => {
+        const my = listEl.querySelector('.current-score');
+        if (my) my.scrollIntoView({ behavior: 'smooth', block: 'center' });
+    }, 100);
+}
+
+function backToTitle() {
+    UI.show('start-buttons'); UI.show('speed-selector'); UI.hide('retry-btn');
+    UI.hide('result-area'); UI.hide('ranking-board');
+    UI.el['title-text'].innerText = 'ぴよランナー２';
+    UI.show('instructions');
+}
+
+function checkTileGimmick() {
+    if (piyo.isJumping && piyo.mesh.position.y > 2.0) return;
+    const tile = world.getTileAt(piyo.mesh.position.x, piyo.mesh.position.z);
+    if (tile) {
+        piyo.onHole = (tile.type === 'hole');
+        if (tile.type === 'spring') piyo.jump('long');
+        if (tile.type === 'slow_floor' && !isFloorSlowActive()) {
+            gameState.floorSlowEndTime = Date.now() + CONFIG.FLOOR_SLOW_DURATION_MS;
+            UI.showEffectToast('スピードダウン...', 'minus');
+        }
+    } else {
+        piyo.onHole = false;
+    }
+}
+
+// 効果タイマー・速度・時間・距離の集中更新
+function updateGameTick() {
+    const now = performance.now();
+    const dt = now - gameState.lastTickMs;
+    gameState.lastTickMs = now;
+
+    // ゴール演出中はスクロール・時間・効果judgeをすべて停止
+    if (gameState.transitioning) {
+        currentSpeed = 0;
+        return;
+    }
+
+    const tire = isTireActive();
+    const floorSlow = isFloorSlowActive();
+    const star = isStarActive();
+    const stunned = isStunned();
+
+    if (gameState.tireEndTime > 0 && !tire) { gameState.tireEndTime = 0; piyo.tireGroup.visible = false; }
+    if (gameState.starEndTime > 0 && !star) { gameState.starEndTime = 0; piyo.aura.visible = false; UI.setOverlayEffect(null); }
+
+    // 目標速度（しびれ中は停止）
+    let targetSpeed;
+    if (stunned) {
+        targetSpeed = 0;
+    } else {
+        targetSpeed = CONFIG.BASE_SPEED * getDifficultySpeedMul(gameState.stage);
+        if (floorSlow) targetSpeed *= CONFIG.SLOW_SPEED_RATIO;
+        if (tire) targetSpeed *= CONFIG.TIRE_SPEED_RATIO;
+        if (star) targetSpeed *= 1.15;
+    }
+    currentSpeed += (targetSpeed - currentSpeed) * (stunned ? 0.3 : CONFIG.SPEED_LERP);
+
+    // BGMの状態切替：スター(無敵) > タイヤ(スピードアップ) > とろ床(スピードダウン) > 通常
+    if (star) soundManager.setBgmModifier('star');
+    else if (tire) soundManager.setBgmModifier('fast');
+    else if (floorSlow) soundManager.setBgmModifier('slow');
+    else soundManager.setBgmModifier('normal');
+
+    // とろ床オーバーレイ
+    if (floorSlow && !star) UI.setOverlayEffect('purple');
+    else if (star) UI.setOverlayEffect('gold');
+    else if (gameState.starEndTime === 0 && gameState.floorSlowEndTime === 0) UI.setOverlayEffect(null);
+    else if (!floorSlow && !star) UI.setOverlayEffect(null);
+
+    // 距離加算（ゴール未出現のときだけ進捗）
+    if (!gameState.goalSpawned) {
+        gameState.distance += currentSpeed;
+        if (gameState.distance >= gameState.goalDistance) {
+            gameState.goalSpawned = true;
+            goalGate.spawn();
+        }
+    }
+
+    // 時間カウントダウン（しびれ中も減る＝ロス）
+    gameState.timeLeftMs -= dt;
+    if (gameState.timeLeftMs <= 0) {
+        gameState.timeLeftMs = 0;
+        timeUp();
+    }
+}
+
+function timeUp() {
+    if (gameState.transitioning) return;
+    gameState.isPlaying = false;
+    soundManager.stopBgm();
+    gameOver();
+}
+
+// =====================================================================
+// 13. セットアップ / メインループ
+// =====================================================================
+
+function init() {
+    UI.init();
+    _initTextures();
+    _initMaterials();
+    _initScene();
+    _initRenderer();
+    _initLights();
+
+    world = new World();
+    piyo = new Piyo();
+    objectManager = new ObjectManager();
+    particleSystem = new ParticleSystem();
+    goalGate = new GoalGate();
+    inputManager = new InputManager();
+
+    _initEventListeners();
+    animate();
+}
+
+function _initTextures() {
+    const emojis = {
+        cloud: '☁️', cake: '🍰', onigiri: '🍙',
+        clock: '⏰', star: '⭐',
+        fire: '🔥', ghost: '👻', impact: '💥', sparkle: '✨', goal: '🏁'
+    };
+    for (const [k, e] of Object.entries(emojis)) textureMap[k] = createEmojiTexture(e, 64);
+    // GOAL看板はテキスト
+    textureMap['goal'] = _createGoalTexture();
+    textureMap['goo'] = _createGooTexture();
+}
+
+// ねばねば床のテクスチャ（紫地に水滴っぽい円を散らす）
+function _createGooTexture() {
+    const size = 128;
+    const canvas = document.createElement('canvas');
+    canvas.width = size; canvas.height = size;
+    const ctx = canvas.getContext('2d');
+    ctx.fillStyle = '#7E57C2';
+    ctx.fillRect(0, 0, size, size);
+    ctx.fillStyle = 'rgba(255,255,255,0.25)';
+    // 水滴模様
+    const drops = [
+        [20, 24, 14], [70, 30, 10], [40, 70, 18],
+        [95, 80, 12], [15, 95, 9], [80, 110, 8], [110, 40, 7]
+    ];
+    drops.forEach(([x, y, r]) => {
+        ctx.beginPath();
+        ctx.ellipse(x, y, r, r * 0.7, 0.3, 0, Math.PI * 2);
+        ctx.fill();
+    });
+    ctx.fillStyle = 'rgba(80,30,140,0.35)';
+    const dark = [[55, 20, 10], [25, 60, 12], [100, 60, 9], [60, 105, 11]];
+    dark.forEach(([x, y, r]) => {
+        ctx.beginPath();
+        ctx.ellipse(x, y, r, r * 0.7, -0.2, 0, Math.PI * 2);
+        ctx.fill();
+    });
+    const tex = new THREE.CanvasTexture(canvas);
+    tex.minFilter = THREE.LinearFilter;
+    return tex;
+}
+
+function _createGoalTexture() {
+    const canvas = document.createElement('canvas');
+    canvas.width = 256; canvas.height = 80;
+    const ctx = canvas.getContext('2d');
+    ctx.fillStyle = '#E53935'; ctx.fillRect(0, 0, 256, 80);
+    ctx.fillStyle = '#fff'; ctx.font = 'bold 52px sans-serif';
+    ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+    ctx.fillText('GOAL', 128, 44);
+    const tex = new THREE.CanvasTexture(canvas);
+    tex.minFilter = THREE.LinearFilter;
+    return tex;
+}
+
+function _initMaterials() {
+    matGroundA = new THREE.MeshLambertMaterial({ color: COLORS.GROUND_A });
+    matGroundB = new THREE.MeshLambertMaterial({ color: COLORS.GROUND_B });
+    const sSide = new THREE.MeshLambertMaterial({ color: COLORS.SPRING_SIDE });
+    const sTop = new THREE.MeshLambertMaterial({ color: COLORS.SPRING_FLOOR });
+    matSpring = [sSide, sSide, sTop, sSide, sSide, sSide];
+    // 遅くなる床（紫のねばねば）
+    const slSide = new THREE.MeshLambertMaterial({ color: COLORS.SLOW_SIDE });
+    const slTop = new THREE.MeshLambertMaterial({ color: COLORS.SLOW_FLOOR, map: textureMap['goo'] });
+    matSlowFloor = [slSide, slSide, slTop, slSide, slSide, slSide];
+}
+
+function _initScene() {
+    scene = new THREE.Scene();
+    scene.background = new THREE.Color(COLORS.SKY);
+    camera = new THREE.PerspectiveCamera(50, 1.0, 0.1, 80);
+    camera.position.set(2, 8, 14);
+    camera.lookAt(2, 3, 0);
+}
+
+function _initRenderer() {
+    const container = document.getElementById('game-container');
+    renderer = new THREE.WebGLRenderer({ antialias: false, alpha: false, powerPreference: 'high-performance' });
+    renderer.shadowMap.enabled = false;
+    container.appendChild(renderer.domElement);
+    resizeRenderer();
+    window.addEventListener('resize', resizeRenderer, false);
+}
+
+function _initLights() {
+    scene.add(new THREE.AmbientLight(0xffffff, 0.8));
+    const d = new THREE.DirectionalLight(0xffffff, 0.5);
+    d.position.set(5, 15, 10); scene.add(d);
+}
+
+function _initEventListeners() {
+    UI.el['start-sound-on'].addEventListener('click', () => startGame(true));
+    UI.el['start-sound-off'].addEventListener('click', () => startGame(false));
+    UI.el['retry-btn'].addEventListener('click', backToTitle);
+    UI.el['goal-next-btn'].addEventListener('click', onGoalNextClicked);
+    document.querySelectorAll('button').forEach(b =>
+        b.addEventListener('touchstart', e => e.stopPropagation(), { passive: true }));
+    document.querySelectorAll('input[name="speed"]').forEach(r =>
+        r.parentElement.addEventListener('touchstart', e => e.stopPropagation(), { passive: true }));
+}
+
+function resizeRenderer() {
+    const w = window.innerWidth, h = window.innerHeight;
+    let gW, gH;
+    if (h > w) { gW = h; gH = w; } else { gW = w; gH = h; }
+    camera.aspect = gW / gH; camera.updateProjectionMatrix();
+    const dpr = window.devicePixelRatio || 1;
+    renderer.setPixelRatio(IS_IOS ? Math.min(dpr, 1.0) : Math.min(dpr, 1.5));
+    renderer.setSize(gW, gH, false);
+}
+
+function animate() {
+    requestAnimationFrame(animate);
+    if (gameState.isPlaying) {
+        gameState.frameCount++;
+        updateGameTick();
+        world.update();
+        objectManager.update();
+        goalGate.update();
+        piyo.update();
+        particleSystem.update();
+        checkTileGimmick();
+        objectManager.checkCollision(piyo);
+        UI.refreshTime();
+        UI.refreshProgress();
+        if (gameState.frameCount % 10 === 0) UI.refreshStatus();
+    }
+    if (renderer && scene && camera) renderer.render(scene, camera);
+}
+
+init();
+
+</script>
+</body>
+</html>
