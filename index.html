@@ -72,6 +72,16 @@
             transition: width 0.1s linear, background-color 0.3s;
         }
         #time-bar.warning { background: linear-gradient(90deg, #FF7043, #F4511E); }
+        /* ★ 追加: 危機点滅アニメ */
+        #time-bar.danger {
+            background: linear-gradient(90deg, #FF1744, #D50000);
+            animation: dangerPulse 0.4s ease-in-out infinite;
+        }
+        @keyframes dangerPulse {
+            0%   { opacity: 1; }
+            50%  { opacity: 0.25; }
+            100% { opacity: 1; }
+        }
         #time-text {
             position: absolute; top: 0; left: 0; width: 100%; height: 100%;
             display: flex; align-items: center; justify-content: center;
@@ -136,7 +146,7 @@
             transform: translate(-50%, -50%) scale(1); opacity: 1;
         }
 
-        /* アイテム/床効果のトースト表示（プレイヤー付近にふわっと出る） */
+        /* アイテム/床効果のトースト表示 */
         #effect-toast {
             position: absolute; top: 38%; left: 50%;
             transform: translate(-50%, -50%) translateY(0) scale(0.7);
@@ -152,13 +162,32 @@
             transform: translate(-50%, -50%) translateY(-30px) scale(1);
             opacity: 1;
         }
-        /* 緑：プラス効果 / 紫：マイナス効果 / オレンジ：得点 */
         #effect-toast.plus  { --toast-color: #2E7D32;
             text-shadow: 2px 2px 0 #2E7D32, -2px -2px 0 #2E7D32, 2px -2px 0 #2E7D32, -2px 2px 0 #2E7D32; }
         #effect-toast.minus { --toast-color: #6A1B9A;
             text-shadow: 2px 2px 0 #6A1B9A, -2px -2px 0 #6A1B9A, 2px -2px 0 #6A1B9A, -2px 2px 0 #6A1B9A; }
         #effect-toast.bonus { --toast-color: #E65100;
             text-shadow: 2px 2px 0 #E65100, -2px -2px 0 #E65100, 2px -2px 0 #E65100, -2px 2px 0 #E65100; }
+
+        /* ★ 追加: 残り時間警告テキスト（画面中央上に出る） */
+        #danger-msg {
+            position: absolute; top: 22%; left: 50%;
+            transform: translate(-50%, -50%) scale(0);
+            font-size: 42px; font-weight: 900; color: #FF1744;
+            text-shadow: 3px 3px 0 #fff, -1px -1px 0 #fff;
+            white-space: nowrap; opacity: 0;
+            z-index: 56; pointer-events: none;
+            transition: transform 0.25s cubic-bezier(0.175, 0.885, 0.32, 1.275), opacity 0.25s;
+        }
+        #danger-msg.show {
+            transform: translate(-50%, -50%) scale(1); opacity: 1;
+            animation: dangerMsgPulse 0.5s ease-in-out infinite;
+        }
+        @keyframes dangerMsgPulse {
+            0%   { transform: translate(-50%, -50%) scale(1); }
+            50%  { transform: translate(-50%, -50%) scale(1.08); }
+            100% { transform: translate(-50%, -50%) scale(1); }
+        }
 
         /* ゴール演出オーバーレイ */
         #goal-banner {
@@ -344,6 +373,8 @@
             <div id="bubbu-msg">ぶっぶー</div>
             <div id="stun-msg">ビリビリ！</div>
             <div id="effect-toast"></div>
+            <!-- ★ 追加: 残り10秒警告 -->
+            <div id="danger-msg">⏰ あと10びょう！</div>
 
             <div id="goal-banner">
                 <div class="goal-text">GOAL!</div>
@@ -402,11 +433,13 @@
 
 <script>
 // =====================================================================
-// ぴよランナー２
-//  - 時間制ゴール制 / ステージ制 / BGM / 新アイテム
+// ぴよランナー２ (改)
+//  - 穴判定厳密化・必ず2連続
+//  - ゴール距離を速度連動
+//  - 2ステージごとに速度アップ（+6%/tier）
+//  - ゴール前10秒の不穏演出（BGM・空・カメラ・time-bar）
 // =====================================================================
 
-// --- PWA Service Worker ---
 if ('serviceWorker' in navigator) {
     window.addEventListener('load', () => {
         navigator.serviceWorker.register('./sw.js')
@@ -428,7 +461,7 @@ const COLORS = {
     GROUND_A: 0xA8E6A1, GROUND_B: 0x66C97F,
     HOLE: 0x222222,
     SPRING_FLOOR: 0xFFA500, SPRING_SIDE: 0xCD8500,
-    SLOW_FLOOR: 0x7E57C2, SLOW_SIDE: 0x4527A0,   // 遅くなる床（ねばねば紫）
+    SLOW_FLOOR: 0x7E57C2, SLOW_SIDE: 0x4527A0,
     PIYO_BODY: 0xFFD700, PIYO_BEAK: 0xFFA500, PIYO_EYE: 0x000000,
     BLOCK: 0x6A5ACD, BLOCK_DARK: 0x483D8B,
     TIRE: 0x333333, TIRE_WHEEL: 0xCCCCCC,
@@ -444,42 +477,45 @@ const CONFIG = {
     BASE_SPEED: BASE_SPEED_VAL,
     LOW_SPEED_RATIO: 0.7,
     TIRE_SPEED_RATIO: 1.3,
-    SLOW_SPEED_RATIO: 0.55,        // とろ床効果中の速度係数（小さいほど遅くなる）
+    SLOW_SPEED_RATIO: 0.55,
     SPEED_LERP: 0.05,
 
     GRAVITY: 0.025, FLOAT_GRAVITY: 0.008,
     JUMP_FORCE: 0.45, LONG_JUMP_FORCE: 0.35,
     LANE_LERP: 0.25, LANE_LERP_SLOW: 0.1,
 
-    // 効果(ms)
     TIRE_DURATION_MS: 20000,
-    FLOOR_SLOW_DURATION_MS: 4000,  // 遅くなる床を踏んだ後の継続
-    STAR_DURATION_MS: 6000,        // スター無敵
-
-    // しびれ（被弾ペナルティ）
+    FLOOR_SLOW_DURATION_MS: 4000,
+    STAR_DURATION_MS: 6000,
     STUN_DURATION_MS: 1000,
-
     INVINCIBLE_HIT: 60,
 
-    // 時間・ステージ
-    STAGE_TIME_SEC: 30,            // 各ステージ制限時間（基本値）
-    TIME_REDUCTION_PER_TIER: 3,    // 難易度1段階ごとに制限時間を短縮(秒)
-    MIN_STAGE_TIME_SEC: 15,        // 制限時間の下限
-    GOAL_DISTANCE: 220,            // ゴールまでの走行距離（基本値。約20秒で到達=残りがボーナス）
-    LONG_GOAL_DISTANCE: 320,       // 「距離が伸びる」ステージの距離（タイトな時間になる）
-    LONG_GOAL_CHANCE: 0.4,         // 6ステージ以降、距離が伸びる確率
-    CLOCK_BONUS_SEC: 5,            // 時計で増える秒数
-    TIME_BONUS_PER_SEC: 100,       // 残り時間1秒あたりのボーナス点
-    DIFFICULTY_STEP: 6,            // 6ステージごとに難化
+    // ★ 変更: 2ステージごとに難化（+6%/tier）
+    DIFFICULTY_STEP: 2,
+    DIFFICULTY_SPEED_INC: 0.06,   // 1tierごとの速度増加率
 
-    HEAL_ONIGIRI_SEC: 3,           // おにぎり＝時間回復（体力廃止に伴い時間に変換）
+    STAGE_TIME_SEC: 30,
+    TIME_REDUCTION_PER_TIER: 2,   // 難易度1段階ごとに制限時間を2秒短縮
+    MIN_STAGE_TIME_SEC: 15,
+
+    // ★ 変更: ゴール距離は速度連動で計算するのでここは基準値
+    GOAL_DISTANCE_BASE: 280,       // 220 → 280（のんびり基準）
+    LONG_GOAL_DISTANCE_BASE: 420,  // 320 → 420
+    LONG_GOAL_CHANCE: 0.4,
+
+    CLOCK_BONUS_SEC: 5,
+    TIME_BONUS_PER_SEC: 100,
+
+    HEAL_ONIGIRI_SEC: 3,
     SCORE_CAKE: 300,
-    SCORE_SMASH: 50,               // 無敵中に障害物を粉砕したときの得点
+    SCORE_SMASH: 50,
 
     MAX_OBJECTS: 8,
+
+    // ★ 追加: ゴール前の不穏演出トリガー（残り秒）
+    DANGER_TIME_SEC: 10,
 };
 
-// オブジェクト定義（衝突半幅など）
 const OBJECT_DEFS = {
     cake:         { hitX: 1.0, hitY: 1.5, hitZ: 1.2, kind: 'item' },
     onigiri:      { hitX: 1.0, hitY: 1.5, hitZ: 1.2, kind: 'item' },
@@ -497,10 +533,6 @@ const OBSTACLE_TYPES = ['fire', 'moving_block', 'ghost_sign'];
 
 // =====================================================================
 // ステージ定義
-//  baseStages[0..4] の5種をループ。5ステージごとに難易度倍率が上がる。
-//  weights: スポーン時の各種オブジェクト出現比率（0なら出ない）
-//  bgm: BGMのキー
-//  sky: 背景色
 // =====================================================================
 
 const STAGE_DEFS = [
@@ -514,7 +546,6 @@ const STAGE_DEFS = [
     {
         name: 'ひのやま', sky: 0xE57373, bgm: 'fire',
         groundA: 0xBCAAA4, groundB: 0x8D6E63,
-        // 炎が多い・看板少なめ
         weights: { fire: 3, moving_block: 1, ghost_sign: 0.2,
                    cake: 1.5, onigiri: 2, clock: 1.5, star: 0.7, tire: 0.7,
                    hole: 0.7, spring: 1, slow_floor: 0.3 }
@@ -522,7 +553,6 @@ const STAGE_DEFS = [
     {
         name: 'おばけのもり', sky: 0x5C6BC0, bgm: 'ghost',
         groundA: 0x7986CB, groundB: 0x5C6BC0,
-        // おばけ看板が多い・炎少なめ
         weights: { fire: 0.5, moving_block: 1, ghost_sign: 3,
                    cake: 1.5, onigiri: 1.5, clock: 1.5, star: 1, tire: 0.5,
                    hole: 1, spring: 0.7, slow_floor: 1 }
@@ -530,7 +560,6 @@ const STAGE_DEFS = [
     {
         name: 'がたがたシティ', sky: 0x90A4AE, bgm: 'city',
         groundA: 0xB0BEC5, groundB: 0x78909C,
-        // 動くブロックが多い・とろ床多い
         weights: { fire: 1, moving_block: 3, ghost_sign: 0.7,
                    cake: 2, onigiri: 1, clock: 1, star: 0.7, tire: 1,
                    hole: 0.5, spring: 1, slow_floor: 2 }
@@ -538,7 +567,6 @@ const STAGE_DEFS = [
     {
         name: 'そらのみち', sky: 0x4FC3F7, bgm: 'sky',
         groundA: 0xB3E5FC, groundB: 0x81D4FA,
-        // 穴が多い・バネ多い・アイテム豊富
         weights: { fire: 1, moving_block: 1.5, ghost_sign: 1,
                    cake: 2.5, onigiri: 1.5, clock: 1.5, star: 1, tire: 1.2,
                    hole: 2.5, spring: 2, slow_floor: 0.5 }
@@ -549,31 +577,31 @@ function getStageDef(stageNum) {
     return STAGE_DEFS[(stageNum - 1) % STAGE_DEFS.length];
 }
 function getDifficultyTier(stageNum) {
-    return Math.floor((stageNum - 1) / CONFIG.DIFFICULTY_STEP); // 0,1,2...
+    return Math.floor((stageNum - 1) / CONFIG.DIFFICULTY_STEP);
 }
-// 難易度倍率：ステージが進むほど速くなる
 function getDifficultySpeedMul(stageNum) {
-    return 1 + getDifficultyTier(stageNum) * 0.15;
+    // ★ 変更: DIFFICULTY_STEP=2、増加率=6%/tier
+    return 1 + getDifficultyTier(stageNum) * CONFIG.DIFFICULTY_SPEED_INC;
 }
-// 難易度で障害物がやや増える倍率
 function getObstacleMul(stageNum) {
-    return 1 + getDifficultyTier(stageNum) * 0.25;
+    return 1 + getDifficultyTier(stageNum) * 0.2;
 }
-// 難易度が上がるほど制限時間が短くなる
 function getStageTimeSec(stageNum) {
     const t = CONFIG.STAGE_TIME_SEC - getDifficultyTier(stageNum) * CONFIG.TIME_REDUCTION_PER_TIER;
     return Math.max(CONFIG.MIN_STAGE_TIME_SEC, t);
 }
-// 難易度が上がるほどBGMが速くなる（tempo=ms間隔なので小さくするほど速い）
 function getBgmTempoMul(stageNum) {
-    return Math.max(0.6, 1 - getDifficultyTier(stageNum) * 0.12);
+    return Math.max(0.6, 1 - getDifficultyTier(stageNum) * 0.08);
 }
-// ゴールまでの距離。6ステージ以降は一定確率で距離が伸び、時間がタイトになる
+
+// ★ 変更: ゴール距離を現在のBASE_SPEEDに連動して計算
+// のんびり(×0.7)なら距離も×0.7し、体感時間を揃える
 function getGoalDistance(stageNum) {
-    if (getDifficultyTier(stageNum) >= 1 && Math.random() < CONFIG.LONG_GOAL_CHANCE) {
-        return CONFIG.LONG_GOAL_DISTANCE;
-    }
-    return CONFIG.GOAL_DISTANCE;
+    const speedRatio = CONFIG.BASE_SPEED / BASE_SPEED_VAL;
+    const base = (getDifficultyTier(stageNum) >= 1 && Math.random() < CONFIG.LONG_GOAL_CHANCE)
+        ? CONFIG.LONG_GOAL_DISTANCE_BASE
+        : CONFIG.GOAL_DISTANCE_BASE;
+    return Math.round(base * speedRatio);
 }
 
 // =====================================================================
@@ -585,18 +613,21 @@ const gameState = {
     score: 0,
     stage: 1,
     frameCount: 0,
-    distance: 0,           // 現ステージで走った距離
-    goalDistance: 220,     // 現ステージのゴール距離
-    stageTimeSec: 30,      // 現ステージの制限時間(秒)
-    timeLeftMs: 0,         // 残り時間(ms)
-    lastTickMs: 0,         // 前フレームの時刻
+    distance: 0,
+    goalDistance: 280,
+    stageTimeSec: 30,
+    timeLeftMs: 0,
+    lastTickMs: 0,
     tireEndTime: 0,
     floorSlowEndTime: 0,
     starEndTime: 0,
-    stunEndTime: 0,        // しびれ終了時刻
+    stunEndTime: 0,
     goalSpawned: false,
     goalReached: false,
-    transitioning: false,  // ステージ遷移演出中
+    transitioning: false,
+    // ★ 追加: 不穏演出フラグ
+    dangerTriggered: false,
+    stageSkyColor: new THREE.Color(0x87CEEB),  // 現ステージの本来の空色
 };
 
 let currentSpeed = CONFIG.BASE_SPEED;
@@ -625,7 +656,6 @@ class SoundManager {
         this.masterGain = this.ctx.createGain();
         this.masterGain.gain.value = 0.3;
         this.masterGain.connect(this.ctx.destination);
-
         this.bgmGain = this.ctx.createGain();
         this.bgmGain.gain.value = 0.12;
         this.bgmGain.connect(this.ctx.destination);
@@ -705,9 +735,6 @@ class SoundManager {
         });
     }
 
-    // --- BGM（ステージ別チップチューン） ---
-    // 各曲は音階配列。状態（通常/スピードアップ/スピードダウン/無敵）に応じて
-    // テンポや音色を動的に変えながら再帰再生する。
     static BGM_TRACKS = {
         grass: { tempo: 220, wave: 'square',
             seq: [523,0,659,0,784,659,523,0, 587,0,698,0,880,698,587,0] },
@@ -719,35 +746,35 @@ class SoundManager {
             seq: [392,392,0,392,523,0,440,0, 349,349,0,349,440,0,392,0] },
         sky:   { tempo: 200, wave: 'sine',
             seq: [659,784,880,784,659,587,523,587, 659,880,1046,880,784,659,587,0] },
-        // 無敵スター中の専用テーマ（明るく華やか）
         star:  { tempo: 110, wave: 'square',
             seq: [784,880,1046,1318,1046,880,784,659, 784,880,1046,1318,1568,1318,1046,880] },
+        // ★ 追加: 残り10秒の不穏テーマ（低音・不規則・鬼気迫る）
+        danger: { tempo: 120, wave: 'sawtooth',
+            seq: [220,0,196,0,220,0,185,220, 0,196,0,220,0,165,0,220] },
     };
 
-    // 状態タイプごとのテンポ倍率・音色上書き
     static BGM_MODIFIERS = {
         normal: { tempoMul: 1.0,  wave: null },
-        fast:   { tempoMul: 0.55, wave: null },        // タイヤ：スピードアップ
-        slow:   { tempoMul: 1.9,  wave: 'sine' },      // とろ床：スピードダウン
-        star:   { tempoMul: 1.0,  wave: null, track: 'star' }, // 無敵：専用曲
+        fast:   { tempoMul: 0.55, wave: null },
+        slow:   { tempoMul: 1.9,  wave: 'sine' },
+        star:   { tempoMul: 1.0,  wave: null, track: 'star' },
+        // ★ 追加: 不穏モード（速め・sawtooth）
+        danger: { tempoMul: 0.65, wave: 'sawtooth', track: 'danger' },
     };
 
-    // key: ステージのベース曲キー, stageTempoMul: 難易度によるテンポ倍率
     startBgm(key, stageTempoMul = 1) {
         this.bgmKey = key;
         this.bgmStageTempoMul = stageTempoMul;
         this.bgmModifier = 'normal';
         this.bgmStep = 0;
         if (!this.enabled || !this.ctx) return;
-        if (this.bgmTimer) return; // 既にループ中ならテイク継続（次ティックで状態反映）
+        if (this.bgmTimer) return;
         this._scheduleBgmTick();
     }
 
-    // 再生中のBGMの状態（テンポ・曲）を切り替える
     setBgmModifier(type) {
         if (this.bgmModifier === type) return;
         this.bgmModifier = type;
-        // トラックが切り替わる場合はステップをリセットして曲頭から
         this.bgmStep = 0;
     }
 
@@ -756,10 +783,8 @@ class SoundManager {
         const trackKey = mod.track || this.bgmKey;
         const track = SoundManager.BGM_TRACKS[trackKey];
         if (!track) { this.bgmTimer = null; return; }
-
         const interval = Math.max(60, Math.round(track.tempo * this.bgmStageTempoMul * mod.tempoMul));
         this._bgmTick(track, interval, mod.wave);
-
         this.bgmTimer = setTimeout(() => this._scheduleBgmTick(), interval);
     }
 
@@ -786,7 +811,6 @@ class SoundManager {
         this.bgmModifier = 'normal';
     }
 
-    // --- ゴール演出中のジングル（サマリー表示中ループ） ---
     startGoalJingle() {
         if (!this.enabled || !this.ctx) return;
         if (this.goalJingleTimer) return;
@@ -796,7 +820,7 @@ class SoundManager {
 
     _scheduleGoalJingle() {
         if (!this.ctx) return;
-        const seq = [1046, 0, 1318, 0, 1568, 0, 1318, 0]; // ゆったりキラキラ
+        const seq = [1046, 0, 1318, 0, 1568, 0, 1318, 0];
         const interval = 260;
         const freq = seq[this.goalJingleStep % seq.length];
         this.goalJingleStep++;
@@ -833,7 +857,7 @@ class RankingManager {
         try {
             const d = localStorage.getItem(this.storageKey);
             return d ? JSON.parse(d) : [];
-        } catch (e) { console.error('Ranking load error', e); return []; }
+        } catch (e) { return []; }
     }
     save(score, stage) {
         let ranks = this.load();
@@ -850,6 +874,7 @@ class RankingManager {
     }
 }
 const rankingManager = new RankingManager();
+
 // =====================================================================
 // 4. UI
 // =====================================================================
@@ -859,8 +884,9 @@ const UI = {
     init() {
         const ids = [
             'stage-label', 'time-bar', 'time-text', 'score-board',
-            'progress-runner', 'bubbu-msg', 'stun-msg', 'effect-toast', 'damage-flash',
-            'effect-overlay', 'overlay', 'title-text', 'instructions',
+            'progress-runner', 'bubbu-msg', 'stun-msg', 'effect-toast',
+            'danger-msg',  // ★ 追加
+            'damage-flash', 'effect-overlay', 'overlay', 'title-text', 'instructions',
             'speed-selector', 'ranking-board', 'ranking-list', 'result-area',
             'final-score', 'start-buttons', 'start-sound-on', 'start-sound-off',
             'retry-btn', 'goal-banner', 'goal-bonus', 'goal-score-before',
@@ -882,8 +908,18 @@ const UI = {
         const ratio = Math.max(0, Math.min(1, gameState.timeLeftMs / (gameState.stageTimeSec * 1000)));
         this.el['time-bar'].style.width = (ratio * 100) + '%';
         this.el['time-text'].innerText = sec.toFixed(1);
-        if (sec <= 10) this.el['time-bar'].classList.add('warning');
-        else this.el['time-bar'].classList.remove('warning');
+
+        const bar = this.el['time-bar'];
+        if (sec <= CONFIG.DANGER_TIME_SEC) {
+            // ★ 危機クラス（激しく点滅）
+            bar.classList.remove('warning');
+            bar.classList.add('danger');
+        } else if (sec <= 10) {
+            bar.classList.add('warning');
+            bar.classList.remove('danger');
+        } else {
+            bar.classList.remove('warning', 'danger');
+        }
     },
 
     refreshProgress() {
@@ -902,11 +938,19 @@ const UI = {
         setTimeout(() => el.classList.remove('show'), CONFIG.STUN_DURATION_MS - 100);
     },
 
-    // type: 'plus'(緑) | 'minus'(紫) | 'bonus'(オレンジ)
+    // ★ 追加: 残り10秒警告を1回だけ表示
+    showDangerMsg() {
+        const el = this.el['danger-msg'];
+        el.classList.add('show');
+        setTimeout(() => el.classList.remove('show'), 2500);
+    },
+    hideDangerMsg() {
+        this.el['danger-msg'].classList.remove('show');
+    },
+
     showEffectToast(text, type) {
         const el = this.el['effect-toast'];
         el.classList.remove('show', 'plus', 'minus', 'bonus');
-        // 再アニメーションのため一旦リフロー
         void el.offsetWidth;
         el.innerText = text;
         el.classList.add(type, 'show');
@@ -922,9 +966,10 @@ const UI = {
 
     setOverlayEffect(type) {
         const el = this.el['effect-overlay'];
-        if (type === 'blue')      { el.style.backgroundColor = 'rgba(0, 0, 255, 0.1)'; el.style.opacity = 1; }
-        else if (type === 'gold') { el.style.backgroundColor = 'rgba(255, 215, 0, 0.18)'; el.style.opacity = 1; }
+        if (type === 'blue')       { el.style.backgroundColor = 'rgba(0, 0, 255, 0.1)'; el.style.opacity = 1; }
+        else if (type === 'gold')  { el.style.backgroundColor = 'rgba(255, 215, 0, 0.18)'; el.style.opacity = 1; }
         else if (type === 'purple'){ el.style.backgroundColor = 'rgba(120, 60, 180, 0.2)'; el.style.opacity = 1; }
+        else if (type === 'red')   { el.style.backgroundColor = 'rgba(180, 0, 0, 0.15)'; el.style.opacity = 1; }
         else { el.style.opacity = 0; }
     },
 
@@ -960,6 +1005,10 @@ function isFloorSlowActive() { return gameState.floorSlowEndTime > Date.now(); }
 function isStarActive() { return gameState.starEndTime > Date.now(); }
 function isElectricStunned() { return gameState.stunEndTime > Date.now(); }
 function isStunned() { return isElectricStunned() || (piyo && piyo.falling); }
+function isDanger() {
+    return gameState.isPlaying && !gameState.transitioning &&
+           gameState.timeLeftMs <= CONFIG.DANGER_TIME_SEC * 1000 && gameState.timeLeftMs > 0;
+}
 
 function createEmojiTexture(emoji, size) {
     const canvas = document.createElement('canvas');
@@ -967,8 +1016,7 @@ function createEmojiTexture(emoji, size) {
     const ctx = canvas.getContext('2d');
     ctx.clearRect(0, 0, size, size);
     ctx.font = `${size * 0.8}px serif`;
-    ctx.textAlign = 'center';
-    ctx.textBaseline = 'middle';
+    ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
     ctx.fillText(emoji, size / 2, size / 2 + size * 0.1);
     const tex = new THREE.CanvasTexture(canvas);
     tex.minFilter = THREE.LinearFilter;
@@ -1079,7 +1127,6 @@ class Piyo {
         this.fakeShadow.position.y = -0.55;
         this.mesh.add(this.fakeShadow);
 
-        // 無敵スター用オーラ
         const auraMat = new THREE.MeshBasicMaterial({ color: 0xFFD700, transparent: true, opacity: 0.35, side: THREE.DoubleSide });
         this.aura = new THREE.Mesh(new THREE.SphereGeometry(0.95, 10, 8), auraMat);
         this.aura.visible = false;
@@ -1149,7 +1196,6 @@ class Piyo {
         }
     }
 
-    // 障害物被弾 → しびれて停止（時間ロス）
     getStunned() {
         if (this.invincibleTimer > 0 || isStarActive() || isStunned() ||
             this.falling || this.respawning) return;
@@ -1162,14 +1208,12 @@ class Piyo {
         this._clearTire();
     }
 
-    // 穴落下 → そのステージの即終了（ゴール失敗扱いのしびれ）
     handleFall() {
         if (this.falling || this.respawning || isStarActive()) return;
         this.falling = true;
         UI.flashScreen();
         UI.showBubbu();
         soundManager.playTone('damage');
-        // 穴落ちは大きめのロス：3秒分の時間を失う＋しびれ
         gameState.timeLeftMs -= 3000;
         this.respawning = true;
         this._clearTire();
@@ -1196,9 +1240,7 @@ class Piyo {
     addTime(sec) {
         gameState.timeLeftMs += sec * 1000;
         const maxMs = gameState.stageTimeSec * 1000;
-        if (gameState.timeLeftMs > maxMs) {
-            gameState.timeLeftMs = maxMs;
-        }
+        if (gameState.timeLeftMs > maxMs) gameState.timeLeftMs = maxMs;
         this.head.material.emissive.setHex(0x004400);
         setTimeout(() => { this.head.material.emissive.setHex(0x000000); }, 200);
     }
@@ -1208,16 +1250,14 @@ class Piyo {
     update() {
         const tire = isTireActive();
         const star = isStarActive();
-        const stunned = isStunned();          // スクロール停止全般（電気しびれ＋落下中）
-        const electric = isElectricStunned(); // ビリビリ演出用
+        const stunned = isStunned();
+        const electric = isElectricStunned();
 
-        // レーン移動（しびれ中は動けない）
         if (!stunned) {
             this.targetZ = laneToZ(this.lane);
             this.mesh.position.z += (this.targetZ - this.mesh.position.z) * CONFIG.LANE_LERP;
         }
 
-        // しびれ演出（ビリビリ振動）：落下中は通常のX位置のまま
         if (electric) {
             this.mesh.position.x = -4 + (Math.random() - 0.5) * 0.25;
             this.mesh.rotation.z = (Math.random() - 0.5) * 0.3;
@@ -1228,7 +1268,6 @@ class Piyo {
             this.mesh.position.x = -4;
         }
 
-        // スターオーラ
         this.aura.visible = star;
         if (star) {
             const hue = (gameState.frameCount * 8) % 360;
@@ -1300,7 +1339,7 @@ class World {
         this.sceneryGroup = new THREE.Group(); scene.add(this.sceneryGroup);
         this.cols = CONFIG.WORLD_COLS;
         this.holeReservations = new Array(CONFIG.LANE_COUNT).fill(false);
-        this.slowFloorChain = new Array(CONFIG.LANE_COUNT).fill(0); // 連続出現の残りタイル数
+        this.slowFloorChain = new Array(CONFIG.LANE_COUNT).fill(0);
         this._setupScenery();
         for (let x = 0; x < this.cols; x++)
             for (let z = 0; z < CONFIG.LANE_COUNT; z++)
@@ -1335,11 +1374,12 @@ class World {
         this.tileGroup.add(mesh);
     }
 
-    // ステージ開始時に地面色を更新
     applyStageColors(def) {
         matGroundA.color.setHex(def.groundA);
         matGroundB.color.setHex(def.groundB);
         scene.background.setHex(def.sky);
+        // ★ 現ステージの空色を記憶（不穏演出で参照する）
+        gameState.stageSkyColor = new THREE.Color(def.sky);
     }
 
     reset() {
@@ -1372,21 +1412,32 @@ class World {
             if (tile.mesh.position.x < CONFIG.TILE_RECYCLE_X) {
                 tile.mesh.position.x += (this.cols * size);
                 this._resetTileType(tile);
-                // ゴール出現後はギミックを生成しない（クリアしやすく）
                 if (!gameState.goalSpawned) objectManager.spawnObjectOnTile(tile);
             }
         });
     }
 
+    // ★ 変更: Z判定を0.5→1.1に拡大（LANE_WIDTH=2.5の半分弱）
     getTileAt(x, z) {
         return this.tiles.find(t =>
+            t.mesh.visible &&
             Math.abs(t.mesh.position.x - x) < CONFIG.TILE_SIZE / 2 &&
-            Math.abs(t.mesh.position.z - z) < 0.5);
+            Math.abs(t.mesh.position.z - z) < 1.1);
+    }
+
+    // ★ 追加: 穴かどうかを正確に判定するメソッド
+    // visible=falseのタイル（穴）も検索対象にする
+    getHoleAt(x, z) {
+        return this.tiles.find(t =>
+            !t.mesh.visible &&
+            t.type === 'hole' &&
+            Math.abs(t.mesh.position.x - x) < CONFIG.TILE_SIZE / 2 &&
+            Math.abs(t.mesh.position.z - z) < 1.1);
     }
 }
 
 // =====================================================================
-// 9. GoalGate （ゴールゲート）
+// 9. GoalGate
 // =====================================================================
 
 class GoalGate {
@@ -1405,7 +1456,6 @@ class GoalGate {
         bar.position.set(0, 5, 0);
         this.group.add(bar);
 
-        // GOAL看板（横バーの少し上、正面から見えるように配置）
         const board = new THREE.Mesh(
             new THREE.PlaneGeometry(4.5, 1.4),
             new THREE.MeshBasicMaterial({ map: textureMap['goal'], transparent: true, side: THREE.DoubleSide })
@@ -1418,7 +1468,7 @@ class GoalGate {
     }
 
     spawn() {
-        this.group.position.x = 25; // 右奥から流れてくる（近めにして到達を早める）
+        this.group.position.x = 25;
         this.group.visible = true;
         this.reached = false;
     }
@@ -1428,13 +1478,13 @@ class GoalGate {
     update() {
         if (!this.group.visible) return;
         this.group.position.x -= currentSpeed;
-        // ぴよのX(-4)を通過したらゴール
         if (!this.reached && this.group.position.x <= -4) {
             this.reached = true;
             onGoalReached();
         }
     }
 }
+
 // =====================================================================
 // 10. Object Manager
 // =====================================================================
@@ -1466,38 +1516,26 @@ class ObjectManager {
             case 'clock':   mesh = this._createBoardMesh('clock', 0.85); break;
             case 'star':    mesh = this._createBoardMesh('star', 0.9); break;
             case 'tire': {
-                // フィールド上では「車」の見た目。取るとぴよにタイヤが付く。
                 const group = new THREE.Group();
                 const bodyMat = new THREE.MeshLambertMaterial({ color: COLORS.CAR_BODY });
                 const darkMat = new THREE.MeshLambertMaterial({ color: COLORS.CAR_BODY_DARK });
                 const winMat  = new THREE.MeshLambertMaterial({ color: COLORS.CAR_WINDOW });
-
                 const body = new THREE.Mesh(new THREE.BoxGeometry(1.6, 0.5, 0.9), bodyMat);
                 group.add(body);
                 const cabin = new THREE.Mesh(new THREE.BoxGeometry(0.8, 0.4, 0.85), winMat);
                 cabin.position.set(0, 0.45, 0);
                 group.add(cabin);
                 const bumperF = new THREE.Mesh(new THREE.BoxGeometry(0.2, 0.5, 0.95), darkMat);
-                bumperF.position.set(0.8, 0, 0);
-                group.add(bumperF);
+                bumperF.position.set(0.8, 0, 0); group.add(bumperF);
                 const bumperB = new THREE.Mesh(new THREE.BoxGeometry(0.2, 0.5, 0.95), darkMat);
-                bumperB.position.set(-0.8, 0, 0);
-                group.add(bumperB);
-
+                bumperB.position.set(-0.8, 0, 0); group.add(bumperB);
                 const wheelGeo = new THREE.CylinderGeometry(0.25, 0.25, 0.2, 8);
                 wheelGeo.rotateX(Math.PI / 2);
                 const wheelMat = new THREE.MeshLambertMaterial({ color: COLORS.TIRE });
-                const wheelPositions = [
-                    [0.55, -0.25, 0.5], [0.55, -0.25, -0.5],
-                    [-0.55, -0.25, 0.5], [-0.55, -0.25, -0.5]
-                ];
-                wheelPositions.forEach(([x, y, z]) => {
-                    const w = new THREE.Mesh(wheelGeo, wheelMat);
-                    w.position.set(x, y, z);
-                    group.add(w);
+                [[0.55,-0.25,0.5],[0.55,-0.25,-0.5],[-0.55,-0.25,0.5],[-0.55,-0.25,-0.5]].forEach(([x,y,z]) => {
+                    const w = new THREE.Mesh(wheelGeo, wheelMat); w.position.set(x,y,z); group.add(w);
                 });
-                mesh = group;
-                break;
+                mesh = group; break;
             }
             case 'moving_block': {
                 const group = new THREE.Group();
@@ -1535,7 +1573,6 @@ class ObjectManager {
             world.holeReservations[tile.lane] = false; return;
         }
 
-        // 遅くなる床の連続出現中なら最優先で敷く
         if (world.slowFloorChain[tile.lane] > 0) {
             tile.type = 'slow_floor'; tile.mesh.material = matSlowFloor;
             tile.mesh.position.y = -0.35;
@@ -1545,31 +1582,26 @@ class ObjectManager {
 
         const rand = Math.random();
 
-        // 穴（ステージ重みで確率変動）
         if (rand < 0.02 * w.hole) {
             tile.type = 'hole'; tile.mesh.visible = false;
-            if (Math.random() < 0.5) world.holeReservations[tile.lane] = true;
+            // ★ 変更: 必ず2連続（50%→100%）
+            world.holeReservations[tile.lane] = true;
             return;
         }
-        // バネ
         if (rand < 0.02 * w.hole + 0.03 * w.spring) {
             tile.type = 'spring'; tile.mesh.material = matSpring;
             tile.mesh.rotation.z = 0.3; tile.mesh.position.y = 0; return;
         }
-        // 遅くなる床（出現したら3〜5タイル連続で同レーンに敷く）
         if (rand < 0.02 * w.hole + 0.03 * w.spring + 0.02 * w.slow_floor) {
             tile.type = 'slow_floor'; tile.mesh.material = matSlowFloor;
             tile.mesh.position.y = -0.35;
-            world.slowFloorChain[tile.lane] = 2 + Math.floor(Math.random() * 3); // 残り2〜4枚
+            world.slowFloorChain[tile.lane] = 2 + Math.floor(Math.random() * 3);
             return;
         }
 
-        // アイテム/障害物（15%枠）
         if (rand < 0.20) {
             const type = this._pickWeightedType(w);
             if (!type) return;
-
-            // 炎は隣レーンとセット出現（ステージ重みが高いほど）
             if (type === 'fire' && Math.random() < 0.3 && tile.lane < CONFIG.LANE_COUNT - 1) {
                 this.spawnSingle('fire', tile.mesh.position.x, tile.mesh.position.z);
                 if (this.activeCount() < CONFIG.MAX_OBJECTS)
@@ -1580,7 +1612,6 @@ class ObjectManager {
         }
     }
 
-    // ステージ重みに基づく抽選
     _pickWeightedType(w) {
         const obsMul = getObstacleMul(gameState.stage);
         const entries = [
@@ -1593,7 +1624,6 @@ class ObjectManager {
             ['star', w.star],
             ['tire', w.tire],
         ].filter(e => e[1] > 0);
-
         const total = entries.reduce((s, e) => s + e[1], 0);
         if (total <= 0) return null;
         let r = Math.random() * total;
@@ -1618,7 +1648,6 @@ class ObjectManager {
         if (FLOATING_TYPES.includes(type)) {
             mesh.position.y = 1.0;
         } else if (type === 'tire') {
-            // 車は地面に置く（タイヤ下端がy=0=地面に接するように）
             mesh.position.y = 0.5;
         } else if (type === 'fire') {
             mesh.position.y = 0.8;
@@ -1707,7 +1736,6 @@ class ObjectManager {
             case 'moving_block':
             case 'ghost_sign':
                 if (isStarActive()) {
-                    // 無敵中は障害物を粉砕してボーナス
                     particleSystem.emit(obj.mesh.position, 'impact');
                     gameState.score += CONFIG.SCORE_SMASH; UI.refreshStatus();
                     UI.showEffectToast('+' + CONFIG.SCORE_SMASH, 'bonus');
@@ -1806,8 +1834,10 @@ function startStage(stageNum) {
     gameState.goalSpawned = false;
     gameState.goalReached = false;
     gameState.transitioning = false;
+    // ★ 追加: 不穏演出リセット
+    gameState.dangerTriggered = false;
+    UI.hideDangerMsg();
 
-    // 難易度反映
     currentSpeed = CONFIG.BASE_SPEED * getDifficultySpeedMul(stageNum);
 
     world.reset();
@@ -1831,22 +1861,24 @@ function onGoalReached() {
     gameState.goalReached = true;
     gameState.transitioning = true;
 
+    // ★ 不穏演出を解除
+    UI.hideDangerMsg();
+    scene.background.setHex(gameState.stageSkyColor.getHex());
+
     soundManager.playTone('goal');
     soundManager.stopBgm();
     soundManager.startGoalJingle();
 
-    // スクロール停止
     currentSpeed = 0;
 
-    // 残り時間ボーナス
     const scoreBefore = gameState.score;
     const remainSec = Math.max(0, gameState.timeLeftMs / 1000);
     const bonus = Math.floor(remainSec * CONFIG.TIME_BONUS_PER_SEC);
     gameState.score += bonus;
     UI.refreshStatus();
+    UI.setOverlayEffect(null);
     UI.showGoalBanner(scoreBefore, bonus);
 
-    // 紙吹雪
     for (let i = 0; i < 8; i++) {
         setTimeout(() => {
             const p = new THREE.Vector3(
@@ -1857,8 +1889,6 @@ function onGoalReached() {
             particleSystem.emit(p, 'sparkle');
         }, i * 60);
     }
-
-    // サマリーはボタン押下まで表示したまま（onGoalNextClickedで次へ）
 }
 
 function onGoalNextClicked() {
@@ -1873,17 +1903,19 @@ function gameOver() {
     gameState.isPlaying = false;
     soundManager.stopBgm();
     soundManager.stopGoalJingle();
+    UI.hideDangerMsg();
     UI.show('overlay'); UI.show('title-text');
     UI.el['title-text'].innerText = 'GAME OVER';
     UI.show('result-area');
     UI.el['final-score'].innerText = Math.floor(gameState.score);
-
     const rankData = rankingManager.save(gameState.score, gameState.stage);
     renderRanking(rankData);
     UI.show('ranking-board');
     UI.show('retry-btn');
     UI.el['retry-btn'].innerText = 'もう一度';
     UI.setOverlayEffect(null);
+    // ★ 空色をリセット
+    scene.background.setHex(0x87CEEB);
 }
 
 function renderRanking(rankData) {
@@ -1912,19 +1944,81 @@ function backToTitle() {
     UI.show('instructions');
 }
 
+// ★ 変更: 穴判定を厳密化
+// ジャンプ中スキップを廃止 → 着地直前に穴があっても正しく検出
 function checkTileGimmick() {
-    if (piyo.isJumping && piyo.mesh.position.y > 2.0) return;
-    const tile = world.getTileAt(piyo.mesh.position.x, piyo.mesh.position.z);
-    if (tile) {
-        piyo.onHole = (tile.type === 'hole');
-        if (tile.type === 'spring') piyo.jump('long');
-        if (tile.type === 'slow_floor' && !isFloorSlowActive()) {
-            gameState.floorSlowEndTime = Date.now() + CONFIG.FLOOR_SLOW_DURATION_MS;
-            UI.showEffectToast('スピードダウン...', 'minus');
-        }
+    // 落下中・リスポーン中は判定しない
+    if (piyo.falling || piyo.respawning) return;
+
+    const px = piyo.mesh.position.x;
+    const pz = piyo.mesh.position.z;
+    const py = piyo.mesh.position.y;
+
+    // ジャンプ中で十分な高さがある場合は穴判定しない（高ジャンプで飛び越える意図がある）
+    // ただし、着地直前（y < 2.5）は判定する
+    const skipHoleCheck = piyo.isJumping && py > 2.5;
+
+    // ★ 穴を明示的に探す（visible=falseタイルも対象）
+    const holeHere = world.getHoleAt(px, pz);
+
+    if (!skipHoleCheck && holeHere) {
+        piyo.onHole = true;
     } else {
-        piyo.onHole = false;
+        // 通常タイルを探す
+        const tile = world.getTileAt(px, pz);
+        if (tile) {
+            piyo.onHole = (tile.type === 'hole'); // getTileAtはvisible=trueのみなので通常これはfalse
+            if (tile.type === 'spring') piyo.jump('long');
+            if (tile.type === 'slow_floor' && !isFloorSlowActive()) {
+                gameState.floorSlowEndTime = Date.now() + CONFIG.FLOOR_SLOW_DURATION_MS;
+                UI.showEffectToast('スピードダウン...', 'minus');
+            }
+        } else {
+            // タイルが見つからない = 穴の可能性（座標外含む）
+            if (!skipHoleCheck) {
+                piyo.onHole = true;
+            } else {
+                piyo.onHole = false;
+            }
+        }
     }
+}
+
+// ★ 追加: 残り10秒の不穏演出
+function updateDangerEffect() {
+    if (!isDanger() || isStarActive()) {
+        // スター中は不穏演出をキャンセル
+        if (!isStarActive() && gameState.dangerTriggered) {
+            // タイムアップ直前のredオーバーレイを維持するが、スター中は金色に上書き
+        }
+        return;
+    }
+
+    // 初回トリガー
+    if (!gameState.dangerTriggered) {
+        gameState.dangerTriggered = true;
+        UI.showDangerMsg();
+        soundManager.setBgmModifier('danger');
+    }
+
+    const sec = gameState.timeLeftMs / 1000;
+    const ratio = sec / CONFIG.DANGER_TIME_SEC; // 1→0
+
+    // ★ 空を徐々に暗赤色にフェード（元の色 → 暗赤）
+    const skyTarget = new THREE.Color(0x4A0000);
+    const current = new THREE.Color();
+    current.lerpColors(gameState.stageSkyColor, skyTarget, 1 - ratio);
+    scene.background.copy(current);
+
+    // ★ 赤いオーバーレイ（徐々に強く）
+    const overlayEl = UI.el['effect-overlay'];
+    overlayEl.style.backgroundColor = `rgba(180, 0, 0, ${0.05 + (1 - ratio) * 0.25})`;
+    overlayEl.style.opacity = 1;
+
+    // ★ カメラ揺れ（徐々に激しく）
+    const shake = (1 - ratio) * 0.12;
+    camera.position.x = 2 + (Math.random() - 0.5) * shake;
+    camera.position.y = 8 + (Math.random() - 0.5) * shake;
 }
 
 // 効果タイマー・速度・時間・距離の集中更新
@@ -1933,7 +2027,6 @@ function updateGameTick() {
     const dt = now - gameState.lastTickMs;
     gameState.lastTickMs = now;
 
-    // ゴール演出中はスクロール・時間・効果judgeをすべて停止
     if (gameState.transitioning) {
         currentSpeed = 0;
         return;
@@ -1943,11 +2036,15 @@ function updateGameTick() {
     const floorSlow = isFloorSlowActive();
     const star = isStarActive();
     const stunned = isStunned();
+    const danger = isDanger();
 
     if (gameState.tireEndTime > 0 && !tire) { gameState.tireEndTime = 0; piyo.tireGroup.visible = false; }
-    if (gameState.starEndTime > 0 && !star) { gameState.starEndTime = 0; piyo.aura.visible = false; UI.setOverlayEffect(null); }
+    if (gameState.starEndTime > 0 && !star) {
+        gameState.starEndTime = 0; piyo.aura.visible = false;
+        // スター終了後：不穏状態に戻す or 通常に戻す
+        if (!danger) UI.setOverlayEffect(null);
+    }
 
-    // 目標速度（しびれ中は停止）
     let targetSpeed;
     if (stunned) {
         targetSpeed = 0;
@@ -1959,19 +2056,27 @@ function updateGameTick() {
     }
     currentSpeed += (targetSpeed - currentSpeed) * (stunned ? 0.3 : CONFIG.SPEED_LERP);
 
-    // BGMの状態切替：スター(無敵) > タイヤ(スピードアップ) > とろ床(スピードダウン) > 通常
+    // BGM状態切替: スター > タイヤ > とろ床 > 危機 > 通常
     if (star) soundManager.setBgmModifier('star');
     else if (tire) soundManager.setBgmModifier('fast');
     else if (floorSlow) soundManager.setBgmModifier('slow');
+    else if (danger) soundManager.setBgmModifier('danger');
     else soundManager.setBgmModifier('normal');
 
-    // とろ床オーバーレイ
-    if (floorSlow && !star) UI.setOverlayEffect('purple');
-    else if (star) UI.setOverlayEffect('gold');
-    else if (gameState.starEndTime === 0 && gameState.floorSlowEndTime === 0) UI.setOverlayEffect(null);
-    else if (!floorSlow && !star) UI.setOverlayEffect(null);
+    // オーバーレイ（不穏演出中は updateDangerEffect が上書き）
+    if (star) UI.setOverlayEffect('gold');
+    else if (floorSlow && !danger) UI.setOverlayEffect('purple');
+    else if (!floorSlow && !danger && !star) UI.setOverlayEffect(null);
 
-    // 距離加算（ゴール未出現のときだけ進捗）
+    // ★ 不穏演出
+    updateDangerEffect();
+
+    // スター中は空と揺れを上書きリセット
+    if (star && gameState.dangerTriggered) {
+        scene.background.copy(gameState.stageSkyColor);
+        camera.position.set(2, 8, 14);
+    }
+
     if (!gameState.goalSpawned) {
         gameState.distance += currentSpeed;
         if (gameState.distance >= gameState.goalDistance) {
@@ -1980,7 +2085,6 @@ function updateGameTick() {
         }
     }
 
-    // 時間カウントダウン（しびれ中も減る＝ロス）
     gameState.timeLeftMs -= dt;
     if (gameState.timeLeftMs <= 0) {
         gameState.timeLeftMs = 0;
@@ -2025,36 +2129,24 @@ function _initTextures() {
         fire: '🔥', ghost: '👻', impact: '💥', sparkle: '✨', goal: '🏁'
     };
     for (const [k, e] of Object.entries(emojis)) textureMap[k] = createEmojiTexture(e, 64);
-    // GOAL看板はテキスト
     textureMap['goal'] = _createGoalTexture();
     textureMap['goo'] = _createGooTexture();
 }
 
-// ねばねば床のテクスチャ（紫地に水滴っぽい円を散らす）
 function _createGooTexture() {
     const size = 128;
     const canvas = document.createElement('canvas');
     canvas.width = size; canvas.height = size;
     const ctx = canvas.getContext('2d');
-    ctx.fillStyle = '#7E57C2';
-    ctx.fillRect(0, 0, size, size);
+    ctx.fillStyle = '#7E57C2'; ctx.fillRect(0, 0, size, size);
     ctx.fillStyle = 'rgba(255,255,255,0.25)';
-    // 水滴模様
-    const drops = [
-        [20, 24, 14], [70, 30, 10], [40, 70, 18],
-        [95, 80, 12], [15, 95, 9], [80, 110, 8], [110, 40, 7]
-    ];
-    drops.forEach(([x, y, r]) => {
-        ctx.beginPath();
-        ctx.ellipse(x, y, r, r * 0.7, 0.3, 0, Math.PI * 2);
-        ctx.fill();
+    const drops = [[20,24,14],[70,30,10],[40,70,18],[95,80,12],[15,95,9],[80,110,8],[110,40,7]];
+    drops.forEach(([x,y,r]) => {
+        ctx.beginPath(); ctx.ellipse(x,y,r,r*0.7,0.3,0,Math.PI*2); ctx.fill();
     });
     ctx.fillStyle = 'rgba(80,30,140,0.35)';
-    const dark = [[55, 20, 10], [25, 60, 12], [100, 60, 9], [60, 105, 11]];
-    dark.forEach(([x, y, r]) => {
-        ctx.beginPath();
-        ctx.ellipse(x, y, r, r * 0.7, -0.2, 0, Math.PI * 2);
-        ctx.fill();
+    [[55,20,10],[25,60,12],[100,60,9],[60,105,11]].forEach(([x,y,r]) => {
+        ctx.beginPath(); ctx.ellipse(x,y,r,r*0.7,-0.2,0,Math.PI*2); ctx.fill();
     });
     const tex = new THREE.CanvasTexture(canvas);
     tex.minFilter = THREE.LinearFilter;
@@ -2080,7 +2172,6 @@ function _initMaterials() {
     const sSide = new THREE.MeshLambertMaterial({ color: COLORS.SPRING_SIDE });
     const sTop = new THREE.MeshLambertMaterial({ color: COLORS.SPRING_FLOOR });
     matSpring = [sSide, sSide, sTop, sSide, sSide, sSide];
-    // 遅くなる床（紫のねばねば）
     const slSide = new THREE.MeshLambertMaterial({ color: COLORS.SLOW_SIDE });
     const slTop = new THREE.MeshLambertMaterial({ color: COLORS.SLOW_FLOOR, map: textureMap['goo'] });
     matSlowFloor = [slSide, slSide, slTop, slSide, slSide, slSide];
