@@ -468,6 +468,8 @@ const COLORS = {
     HOLE: 0x222222,
     SPRING_FLOOR: 0xFFA500, SPRING_SIDE: 0xCD8500,
     SLOW_FLOOR: 0x7E57C2, SLOW_SIDE: 0x4527A0,
+    PUSH_LEFT_FLOOR: 0x1E88E5, PUSH_LEFT_SIDE: 0x1565C0,   // 明るい青：左レーン移動
+    PUSH_RIGHT_FLOOR: 0xFF6F00, PUSH_RIGHT_SIDE: 0xE65100,   // オレンジ：右レーン移動
     PIYO_BODY: 0xFFD700, PIYO_BEAK: 0xFFA500, PIYO_EYE: 0x000000,
     BLOCK: 0x6A5ACD, BLOCK_DARK: 0x483D8B,
     TIRE: 0x333333, TIRE_WHEEL: 0xCCCCCC,
@@ -658,7 +660,7 @@ let currentSpeed = CONFIG.BASE_SPEED;
 let scene, camera, renderer;
 let piyo, world, objectManager, inputManager, particleSystem, goalGate;
 const textureMap = {};
-let matGroundA, matGroundB, matSpring, matSlowFloor;
+let matGroundA, matGroundB, matSpring, matSlowFloor, matPushLeft, matPushRight;
 
 // =====================================================================
 // 2. Sound Manager + BGM
@@ -800,7 +802,9 @@ class SoundManager {
 
     static BGM_MODIFIERS = {
         normal: { tempoMul: 1.0,  wave: null },
-        fast:   { tempoMul: 0.55, wave: null },
+        fast1:  { tempoMul: 0.65, wave: null },   // タイヤ×1
+        fast2:  { tempoMul: 0.45, wave: null },   // タイヤ×2
+        fast3:  { tempoMul: 0.32, wave: null },   // タイヤ×3（爆速）
         slow:   { tempoMul: 1.9,  wave: 'sine' },
         star:   { tempoMul: 1.0,  wave: null, track: 'star' },
         // ★ 追加: 不穏モード（速め・sawtooth）
@@ -1200,6 +1204,7 @@ class Piyo {
         this.falling = false;
         this.respawning = false;
         this.springJustPlayed = false;  // ★ バネ音連打防止
+        this._pushCooldown = false;       // ★ 強制移動床クールダウン
         this.mesh.rotation.set(0, 0, 0);
         this.tireGroup.visible = false;
         this.aura.visible = false;
@@ -1459,6 +1464,7 @@ class World {
         this.cols = CONFIG.WORLD_COLS;
         this.holeReservations = new Array(CONFIG.LANE_COUNT).fill(false);
         this.slowFloorChain = new Array(CONFIG.LANE_COUNT).fill(0);
+        this.pushFloorChain = new Array(CONFIG.LANE_COUNT).fill(null); // null | 'left' | 'right'
         this._setupScenery();
         for (let x = 0; x < this.cols; x++)
             for (let z = 0; z < CONFIG.LANE_COUNT; z++)
@@ -1504,6 +1510,7 @@ class World {
     reset() {
         this.holeReservations.fill(false);
         this.slowFloorChain.fill(0);
+        this.pushFloorChain.fill(null);
         this.tiles.forEach(t => {
             t.mesh.position.x = CONFIG.TILE_X_START + t.gridX * CONFIG.TILE_SIZE;
             this._resetTileType(t);
@@ -1699,6 +1706,16 @@ class ObjectManager {
             return;
         }
 
+        // ★ 強制移動床の連続出現
+        if (world.pushFloorChain[tile.lane]) {
+            const dir = world.pushFloorChain[tile.lane];
+            tile.type = 'push_' + dir;
+            tile.mesh.material = dir === 'left' ? matPushLeft : matPushRight;
+            tile.mesh.position.y = -0.35;
+            world.pushFloorChain[tile.lane] = null;
+            return;
+        }
+
         const rand = Math.random();
 
         if (rand < 0.02 * w.hole) {
@@ -1715,6 +1732,22 @@ class ObjectManager {
             tile.type = 'slow_floor'; tile.mesh.material = matSlowFloor;
             tile.mesh.position.y = -0.35;
             world.slowFloorChain[tile.lane] = 2 + Math.floor(Math.random() * 3);
+            return;
+        }
+
+        // ★ 強制移動床（ステージ6=tier>=2 から登場）
+        const pushWeight = gameState.stage >= 6 ? 0.025 : 0;  // ★ STAGE6から登場
+        if (pushWeight > 0 && rand < 0.02 * w.hole + 0.03 * w.spring + 0.02 * w.slow_floor + pushWeight) {
+            const dir = Math.random() < 0.5 ? 'left' : 'right';
+            // レーン端なら反対方向に（端から押し出されても意味がないので）
+            const finalDir = (dir === 'left' && tile.lane === 0) ? 'right'
+                           : (dir === 'right' && tile.lane === CONFIG.LANE_COUNT - 1) ? 'left'
+                           : dir;
+            tile.type = 'push_' + finalDir;
+            tile.mesh.material = finalDir === 'left' ? matPushLeft : matPushRight;
+            tile.mesh.position.y = -0.35;
+            // 2タイル連続で出す
+            world.pushFloorChain[tile.lane] = finalDir;
             return;
         }
 
@@ -2070,52 +2103,64 @@ function backToTitle() {
     UI.show('instructions');
 }
 
-// ★ 変更: 穴判定を厳密化
-// ジャンプ中スキップを廃止 → 着地直前に穴があっても正しく検出
 function checkTileGimmick() {
-    // 落下中・リスポーン中は判定しない
     if (piyo.falling || piyo.respawning) return;
 
     const px = piyo.mesh.position.x;
     const pz = piyo.mesh.position.z;
     const py = piyo.mesh.position.y;
 
-    // ジャンプ中で十分な高さがある場合は穴判定しない（高ジャンプで飛び越える意図がある）
-    // ただし、着地直前（y < 2.5）は判定する
-    const skipHoleCheck = piyo.isJumping && py > 2.5;
+    // 地面から離れているか（y>1.3で「空中」と判定）
+    const inAir = piyo.isJumping && py > 1.3;
 
-    // ★ 穴を明示的に探す（visible=falseタイルも対象）
+    // 穴判定: 空中で高い（y>2.5）ときだけスキップ
+    const skipHoleCheck = piyo.isJumping && py > 2.5;
     const holeHere = world.getHoleAt(px, pz);
 
     if (!skipHoleCheck && holeHere) {
         piyo.onHole = true;
         piyo.springJustPlayed = false;
-    } else {
-        // 通常タイルを探す
-        const tile = world.getTileAt(px, pz);
-        if (tile) {
-            piyo.onHole = (tile.type === 'hole'); // getTileAtはvisible=trueのみなので通常これはfalse
-            if (tile.type === 'spring') {
-                if (!piyo.springJustPlayed) {
-                    soundManager.playTone('spring');
-                    piyo.springJustPlayed = true;
-                }
-                piyo.jump('long');
-            } else {
-                piyo.springJustPlayed = false;
+        return;
+    }
+
+    piyo.onHole = false;
+
+    // 空中中はバネ・とろ床を無視（上空通過で誤発動しない）
+    if (inAir) {
+        piyo.springJustPlayed = false;
+        return;
+    }
+
+    const tile = world.getTileAt(px, pz);
+    if (tile) {
+        if (tile.type === 'spring') {
+            if (!piyo.springJustPlayed) {
+                soundManager.playTone('spring');
+                piyo.springJustPlayed = true;
             }
-            if (tile.type === 'slow_floor' && !isFloorSlowActive()) {
-                gameState.floorSlowEndTime = Date.now() + CONFIG.FLOOR_SLOW_DURATION_MS;
-                UI.showEffectToast('スピードダウン...', 'minus');
+            piyo.jump('long');
+        } else {
+            piyo.springJustPlayed = false;
+        }
+        if (tile.type === 'slow_floor' && !isFloorSlowActive()) {
+            gameState.floorSlowEndTime = Date.now() + CONFIG.FLOOR_SLOW_DURATION_MS;
+            UI.showEffectToast('スピードダウン...', 'minus');
+        }
+        // ★ 強制移動床
+        if (tile.type === 'push_left' || tile.type === 'push_right') {
+            if (!piyo._pushCooldown) {
+                const dir = tile.type === 'push_left' ? -1 : 1;
+                piyo.moveLane(dir);
+                piyo._pushCooldown = true;
+                setTimeout(() => { piyo._pushCooldown = false; }, 400);
             }
         } else {
-            // タイルが見つからない = 穴の可能性（座標外含む）
-            if (!skipHoleCheck) {
-                piyo.onHole = true;
-            } else {
-                piyo.onHole = false;
-            }
+            piyo._pushCooldown = false;
         }
+    } else {
+        // タイルが見つからない＝穴の可能性
+        if (!skipHoleCheck) piyo.onHole = true;
+        piyo.springJustPlayed = false;
     }
 }
 
@@ -2196,7 +2241,7 @@ function updateGameTick() {
 
     // BGM状態切替: スター > タイヤ > とろ床 > 危機 > 通常
     if (star) soundManager.setBgmModifier('star');
-    else if (tire) soundManager.setBgmModifier('fast');
+    else if (tire) soundManager.setBgmModifier('fast' + Math.min(gameState.tireStack, 3));
     else if (floorSlow) soundManager.setBgmModifier('slow');
     else if (danger) soundManager.setBgmModifier('danger');
     else soundManager.setBgmModifier('normal');
@@ -2292,6 +2337,56 @@ function _initTextures() {
     for (const [k, e] of Object.entries(emojis)) textureMap[k] = createEmojiTexture(e, 64);
     textureMap['goal'] = _createGoalTexture();
     textureMap['goo'] = _createGooTexture();
+    textureMap['push_left']  = _createArrowTexture('left');
+    textureMap['push_right'] = _createArrowTexture('right');
+}
+
+
+function _createArrowTexture(dir) {
+    // カメラ視点: Z軸減少方向（left）が画面上方向、Z軸増加（right）が画面下方向
+    // テクスチャのY軸で上下矢印として描く
+    // left → 上向き矢印（▲）、right → 下向き矢印（▼）
+    const size = 128;
+    const canvas = document.createElement('canvas');
+    canvas.width = size; canvas.height = size;
+    const ctx = canvas.getContext('2d');
+    ctx.clearRect(0, 0, size, size);
+
+    const cx = size / 2, cy = size / 2;
+    const tipW = 56;   // 矢頭の幅
+    const tipH = 42;   // 矢頭の高さ
+    const shaftW = 22; // 軸の太さ
+    const shaftH = 32; // 軸の長さ
+
+    ctx.save();
+    ctx.translate(cx, cy);
+    // left=上向き: そのまま / right=下向き: 上下反転
+    if (dir === 'right') ctx.scale(1, -1);
+
+    // 矢頭（上向き三角）
+    ctx.beginPath();
+    ctx.moveTo(0, -tipH);            // 先端（上）
+    ctx.lineTo(-tipW / 2, 0);        // 左下
+    ctx.lineTo( tipW / 2, 0);        // 右下
+    ctx.closePath();
+    ctx.fillStyle = 'rgba(255,255,255,0.95)';
+    ctx.fill();
+    ctx.strokeStyle = 'rgba(0,0,0,0.3)';
+    ctx.lineWidth = 3;
+    ctx.stroke();
+
+    // 軸（矢頭の下から伸びる）
+    ctx.fillStyle = 'rgba(255,255,255,0.95)';
+    ctx.beginPath();
+    ctx.rect(-shaftW / 2, 0, shaftW, shaftH);
+    ctx.fill();
+    ctx.stroke();
+
+    ctx.restore();
+
+    const tex = new THREE.CanvasTexture(canvas);
+    tex.minFilter = THREE.LinearFilter;
+    return tex;
 }
 
 function _createGooTexture() {
@@ -2336,6 +2431,14 @@ function _initMaterials() {
     const slSide = new THREE.MeshLambertMaterial({ color: COLORS.SLOW_SIDE });
     const slTop = new THREE.MeshLambertMaterial({ color: COLORS.SLOW_FLOOR, map: textureMap['goo'] });
     matSlowFloor = [slSide, slSide, slTop, slSide, slSide, slSide];
+
+    // ★ 強制移動床（左：青 / 右：赤）
+    const plSide = new THREE.MeshLambertMaterial({ color: COLORS.PUSH_LEFT_SIDE });
+    const plTop  = new THREE.MeshLambertMaterial({ color: COLORS.PUSH_LEFT_FLOOR, map: textureMap['push_left'], transparent: true });
+    matPushLeft  = [plSide, plSide, plTop, plSide, plSide, plSide];
+    const prSide = new THREE.MeshLambertMaterial({ color: COLORS.PUSH_RIGHT_SIDE });
+    const prTop  = new THREE.MeshLambertMaterial({ color: COLORS.PUSH_RIGHT_FLOOR, map: textureMap['push_right'], transparent: true });
+    matPushRight = [prSide, prSide, prTop, prSide, prSide, prSide];
 }
 
 function _initScene() {
