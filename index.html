@@ -440,13 +440,6 @@
 //  - ゴール前10秒の不穏演出（BGM・空・カメラ・time-bar）
 // =====================================================================
 
-if ('serviceWorker' in navigator) {
-    window.addEventListener('load', () => {
-        navigator.serviceWorker.register('./sw.js')
-            .then(reg => console.log('SW registered:', reg))
-            .catch(err => console.log('SW registration failed:', err));
-    });
-}
 window.onerror = (m, s, l, c, e) => console.error(m, e);
 
 // =====================================================================
@@ -482,6 +475,7 @@ const CONFIG = {
 
     GRAVITY: 0.025, FLOAT_GRAVITY: 0.008,
     JUMP_FORCE: 0.45, LONG_JUMP_FORCE: 0.35,
+    TIRE_HOP_FORCE: 0.18,   // ★ 車中のちょんジャンプ（半分以下の高さ）
     LANE_LERP: 0.25, LANE_LERP_SLOW: 0.1,
 
     TIRE_DURATION_MS: 20000,
@@ -498,17 +492,22 @@ const CONFIG = {
     TIME_REDUCTION_PER_TIER: 2,   // 難易度1段階ごとに制限時間を2秒短縮
     MIN_STAGE_TIME_SEC: 15,
 
-    // ★ 変更: ゴール距離は速度連動で計算するのでここは基準値
-    GOAL_DISTANCE_BASE: 280,       // 220 → 280（のんびり基準）
-    LONG_GOAL_DISTANCE_BASE: 420,  // 320 → 420
+    // ★ 変更: のんびり/はやい それぞれ固定距離
+    // のんびり(×0.7)は体感時間を合わせるため別途設定
+    GOAL_DISTANCE_LOW: 196,        // のんびり用（≒体感22秒走行→残り約8秒）
+    GOAL_DISTANCE_HIGH: 320,       // はやい用（≒体感24秒走行→残り約6秒）
+    GOAL_DISTANCE_LONG_LOW: 280,   // のんびり・長距離バリアント
+    GOAL_DISTANCE_LONG_HIGH: 460,  // はやい・長距離バリアント
     LONG_GOAL_CHANCE: 0.4,
 
-    CLOCK_BONUS_SEC: 5,
+    CLOCK_BONUS_SEC: 3,
     TIME_BONUS_PER_SEC: 100,
 
-    HEAL_ONIGIRI_SEC: 3,
+    SCORE_ONIGIRI: 200,      // ★ おにぎりは点数アイテムに変更
     SCORE_CAKE: 300,
     SCORE_SMASH: 50,
+    TIRE_STACK_RATIO: 0.15, // ★ 車重ね掛け: 1台ごとに速度+15%追加
+    TIRE_STACK_MAX: 3,      // ★ 最大3台まで重ねがけ
 
     MAX_OBJECTS: 8,
 
@@ -540,35 +539,35 @@ const STAGE_DEFS = [
         name: 'はらっぱ', sky: 0x87CEEB, bgm: 'grass',
         groundA: 0xA8E6A1, groundB: 0x66C97F,
         weights: { fire: 1, moving_block: 1, ghost_sign: 0.5,
-                   cake: 2, onigiri: 1.5, clock: 1, star: 0.5, tire: 0.7,
+                   cake: 1.0, onigiri: 0.8, clock: 1.0, star: 0.5, tire: 0.5,
                    hole: 1, spring: 1, slow_floor: 0.5 }
     },
     {
         name: 'ひのやま', sky: 0xE57373, bgm: 'fire',
         groundA: 0xBCAAA4, groundB: 0x8D6E63,
         weights: { fire: 3, moving_block: 1, ghost_sign: 0.2,
-                   cake: 1.5, onigiri: 2, clock: 1.5, star: 0.7, tire: 0.7,
+                   cake: 0.7, onigiri: 1.0, clock: 1.2, star: 0.5, tire: 0.5,
                    hole: 0.7, spring: 1, slow_floor: 0.3 }
     },
     {
         name: 'おばけのもり', sky: 0x5C6BC0, bgm: 'ghost',
         groundA: 0x7986CB, groundB: 0x5C6BC0,
         weights: { fire: 0.5, moving_block: 1, ghost_sign: 3,
-                   cake: 1.5, onigiri: 1.5, clock: 1.5, star: 1, tire: 0.5,
+                   cake: 0.7, onigiri: 0.7, clock: 1.0, star: 0.7, tire: 0.4,
                    hole: 1, spring: 0.7, slow_floor: 1 }
     },
     {
         name: 'がたがたシティ', sky: 0x90A4AE, bgm: 'city',
         groundA: 0xB0BEC5, groundB: 0x78909C,
         weights: { fire: 1, moving_block: 3, ghost_sign: 0.7,
-                   cake: 2, onigiri: 1, clock: 1, star: 0.7, tire: 1,
+                   cake: 0.8, onigiri: 0.6, clock: 1.0, star: 0.5, tire: 0.7,
                    hole: 0.5, spring: 1, slow_floor: 2 }
     },
     {
         name: 'そらのみち', sky: 0x4FC3F7, bgm: 'sky',
         groundA: 0xB3E5FC, groundB: 0x81D4FA,
         weights: { fire: 1, moving_block: 1.5, ghost_sign: 1,
-                   cake: 2.5, onigiri: 1.5, clock: 1.5, star: 1, tire: 1.2,
+                   cake: 1.0, onigiri: 0.7, clock: 1.2, star: 0.7, tire: 0.8,
                    hole: 2.5, spring: 2, slow_floor: 0.5 }
     },
 ];
@@ -594,14 +593,12 @@ function getBgmTempoMul(stageNum) {
     return Math.max(0.6, 1 - getDifficultyTier(stageNum) * 0.08);
 }
 
-// ★ 変更: ゴール距離を現在のBASE_SPEEDに連動して計算
-// のんびり(×0.7)なら距離も×0.7し、体感時間を揃える
+// ★ 変更: のんびり/はやいで異なる距離テーブルを使用
 function getGoalDistance(stageNum) {
-    const speedRatio = CONFIG.BASE_SPEED / BASE_SPEED_VAL;
-    const base = (getDifficultyTier(stageNum) >= 1 && Math.random() < CONFIG.LONG_GOAL_CHANCE)
-        ? CONFIG.LONG_GOAL_DISTANCE_BASE
-        : CONFIG.GOAL_DISTANCE_BASE;
-    return Math.round(base * speedRatio);
+    const isLow = (CONFIG.BASE_SPEED < BASE_SPEED_VAL);
+    const useLong = (getDifficultyTier(stageNum) >= 1 && Math.random() < CONFIG.LONG_GOAL_CHANCE);
+    if (isLow) return useLong ? CONFIG.GOAL_DISTANCE_LONG_LOW : CONFIG.GOAL_DISTANCE_LOW;
+    return useLong ? CONFIG.GOAL_DISTANCE_LONG_HIGH : CONFIG.GOAL_DISTANCE_HIGH;
 }
 
 // =====================================================================
@@ -619,6 +616,7 @@ const gameState = {
     timeLeftMs: 0,
     lastTickMs: 0,
     tireEndTime: 0,
+    tireStack: 0,           // ★ タイヤ重ね掛け数
     floorSlowEndTime: 0,
     starEndTime: 0,
     stunEndTime: 0,
@@ -628,6 +626,10 @@ const gameState = {
     // ★ 追加: 不穏演出フラグ
     dangerTriggered: false,
     stageSkyColor: new THREE.Color(0x87CEEB),  // 現ステージの本来の空色
+    // ★ 保証スポーン: 時計・車をステージ中に必ず1回出す
+    guaranteedClock: false,   // 出現済みならtrue
+    guaranteedTire: false,    // 出現済みならtrue
+    guaranteedTriggerDist: 99999, // この距離を超えたら強制スポーン（startStageで上書き）
 };
 
 let currentSpeed = CONFIG.BASE_SPEED;
@@ -715,6 +717,28 @@ class SoundManager {
                 gain.gain.setValueAtTime(0.5, now);
                 gain.gain.linearRampToValueAtTime(0.01, now + 0.35);
                 osc.start(now); osc.stop(now + 0.35); break;
+            case 'spring': {
+                // ぴょーん：低→高へ急スウィープ＋余韻
+                osc.type = 'sine';
+                osc.frequency.setValueAtTime(200, now);
+                osc.frequency.exponentialRampToValueAtTime(1400, now + 0.12);
+                osc.frequency.exponentialRampToValueAtTime(900, now + 0.25);
+                gain.gain.setValueAtTime(0.7, now);
+                gain.gain.linearRampToValueAtTime(0.3, now + 0.12);
+                gain.gain.linearRampToValueAtTime(0.01, now + 0.35);
+                osc.start(now); osc.stop(now + 0.35);
+                // 倍音で軽快さを追加
+                const osc2 = this.ctx.createOscillator();
+                const gain2 = this.ctx.createGain();
+                osc2.connect(gain2); gain2.connect(this.masterGain);
+                osc2.type = 'triangle';
+                osc2.frequency.setValueAtTime(400, now);
+                osc2.frequency.exponentialRampToValueAtTime(2800, now + 0.12);
+                gain2.gain.setValueAtTime(0.3, now);
+                gain2.gain.linearRampToValueAtTime(0.01, now + 0.2);
+                osc2.start(now); osc2.stop(now + 0.2);
+                break;
+            }
             case 'goal':
                 this._fanfare(now); break;
         }
@@ -1154,6 +1178,7 @@ class Piyo {
         this.onHole = false;
         this.falling = false;
         this.respawning = false;
+        this.springJustPlayed = false;  // ★ バネ音連打防止
         this.mesh.rotation.set(0, 0, 0);
         this.tireGroup.visible = false;
         this.aura.visible = false;
@@ -1167,19 +1192,62 @@ class Piyo {
     }
 
     jump(forceType = 'normal') {
-        if (!gameState.isPlaying || this.falling || this.respawning || isStunned()) return;
-        if (!this.isJumping || forceType === 'long') {
+        if (!gameState.isPlaying || this.respawning || isElectricStunned()) return;
+        const tire = isTireActive();
+
+        // ★ タイヤ中に穴へ落下中: タップでジャンプして抜け出せる
+        if (tire && this.falling && !this.isJumping) {
+            soundManager.playTone('jump');
+            this.falling = false;    // 落下キャンセル
+            this.isJumping = true;
+            this.yVelocity = CONFIG.JUMP_FORCE;  // 通常の高さで飛び出す
+            this.isFloating = false;
+            this.onHole = false;
+            return;
+        }
+
+        // 通常ガード（タイヤなし落下中はジャンプ不可）
+        if (this.falling) return;
+
+        // バネ床（long）は車中でも強制実行（音はcheckTileGimmick側のspring音のみ）
+        if (forceType === 'long') {
+            this.isJumping = true;
+            this.yVelocity = CONFIG.LONG_JUMP_FORCE;
+            this.isFloating = true;
+            return;
+        }
+
+        // 車中: 地上にいるときだけちょんジャンプ（二段ジャンプ不可）
+        if (tire) {
+            if (!this.isJumping) {
+                soundManager.playTone('jump');
+                this.isJumping = true;
+                this.yVelocity = CONFIG.TIRE_HOP_FORCE;  // 半分の高さ
+                this.isFloating = false;
+            }
+            return;  // 空中では何もしない（二段ジャンプ不可）
+        }
+
+        // 通常ジャンプ
+        if (!this.isJumping) {
             soundManager.playTone('jump');
             this.isJumping = true;
-            if (forceType === 'long') { this.yVelocity = CONFIG.LONG_JUMP_FORCE; this.isFloating = true; }
-            else { this.yVelocity = CONFIG.JUMP_FORCE; this.isFloating = false; }
+            this.yVelocity = CONFIG.JUMP_FORCE;
+            this.isFloating = false;
         }
     }
 
     activateTire() {
+        // ★ 重ね掛け: スタック数を増やし、時間をリセット（延長）
+        gameState.tireStack = Math.min(
+            (gameState.tireStack || 0) + 1,
+            CONFIG.TIRE_STACK_MAX
+        );
         gameState.tireEndTime = Date.now() + CONFIG.TIRE_DURATION_MS;
         this.tireGroup.visible = true;
         soundManager.playTone('powerup');
+        const extra = gameState.tireStack > 1 ? ` x${gameState.tireStack}` : '';
+        UI.showEffectToast('スピードアップ！' + extra, 'plus');
     }
 
     activateStar() {
@@ -1192,6 +1260,7 @@ class Piyo {
     _clearTire() {
         if (gameState.tireEndTime > 0) {
             gameState.tireEndTime = 0;
+            gameState.tireStack = 0;  // ★ スタックリセット
             this.tireGroup.visible = false;
         }
     }
@@ -1214,7 +1283,26 @@ class Piyo {
         UI.flashScreen();
         UI.showBubbu();
         soundManager.playTone('damage');
-        gameState.timeLeftMs -= 3000;
+
+        // ★ タイヤあり: 時間ロスなし・respawningしない（タップで自力脱出できる）
+        if (gameState.tireStack > 0) {
+            gameState.tireStack--;
+            if (gameState.tireStack <= 0) {
+                gameState.tireEndTime = 0;
+                gameState.tireStack = 0;
+                this.tireGroup.visible = false;
+                UI.showEffectToast('タイヤとれた！', 'minus');
+            } else {
+                gameState.tireEndTime = Date.now() + CONFIG.TIRE_DURATION_MS;
+                UI.showEffectToast(`タイヤ x${gameState.tireStack}`, 'minus');
+            }
+            // タイヤあり落下: 自力脱出を待つ（respawningにしない）
+            // y < -8 まで落ちたら強制リスポーン
+            return;
+        }
+
+        // タイヤなし: 従来通り時間ロス＋強制リスポーン
+        gameState.timeLeftMs -= 2000;
         this.respawning = true;
         this._clearTire();
         setTimeout(() => {
@@ -1312,6 +1400,15 @@ class Piyo {
                 this.mesh.position.y -= 0.3;
                 this.mesh.rotation.z += 0.2;
                 if (this.mesh.position.y < -5 && !this.falling) this.handleFall();
+                // ★ タイヤ落下中に深く落ちすぎたら強制リスポーン（タイムロスあり）
+                if (this.falling && !this.respawning && this.mesh.position.y < -8) {
+                    gameState.timeLeftMs -= 2000;
+                    this.respawning = true;
+                    setTimeout(() => {
+                        if (!gameState.isPlaying) return;
+                        this.respawn();
+                    }, 600);
+                }
             }
         }
     }
@@ -1599,7 +1696,7 @@ class ObjectManager {
             return;
         }
 
-        if (rand < 0.20) {
+        if (rand < 0.16) {   // ★ 変更: 0.12 → 0.16（少し戻す）
             const type = this._pickWeightedType(w);
             if (!type) return;
             if (type === 'fire' && Math.random() < 0.3 && tile.lane < CONFIG.LANE_COUNT - 1) {
@@ -1716,9 +1813,9 @@ class ObjectManager {
                 this.deactivate(obj, index); break;
             case 'onigiri':
                 soundManager.playTone('coin');
-                player.addTime(CONFIG.HEAL_ONIGIRI_SEC);
-                UI.showEffectToast('じかん +' + CONFIG.HEAL_ONIGIRI_SEC + '秒', 'plus');
-                this.deactivate(obj, index); break;
+                gameState.score += CONFIG.SCORE_ONIGIRI; UI.refreshStatus();
+                UI.showEffectToast('+' + CONFIG.SCORE_ONIGIRI, 'bonus');
+                this.deactivate(obj, index); break;  // ★ 時間回復→点数に変更
             case 'clock':
                 soundManager.playTone('clock');
                 player.addTime(CONFIG.CLOCK_BONUS_SEC);
@@ -1729,8 +1826,7 @@ class ObjectManager {
                 UI.showEffectToast('むてき！', 'plus');
                 this.deactivate(obj, index); break;
             case 'tire':
-                player.activateTire();
-                UI.showEffectToast('スピードアップ！', 'plus');
+                player.activateTire();  // トースト表示は activateTire() 内で行う
                 this.deactivate(obj, index); break;
             case 'fire':
             case 'moving_block':
@@ -1824,10 +1920,13 @@ function startStage(stageNum) {
     gameState.stage = stageNum;
     gameState.distance = 0;
     gameState.goalDistance = getGoalDistance(stageNum);
+    // ★ ゴール距離の40%地点で保証スポーン発火
+    gameState.guaranteedTriggerDist = Math.floor(gameState.goalDistance * 0.70);  // ★ 40%→70%（後半に出す）
     gameState.stageTimeSec = getStageTimeSec(stageNum);
     gameState.timeLeftMs = gameState.stageTimeSec * 1000;
     gameState.lastTickMs = performance.now();
     gameState.tireEndTime = 0;
+    gameState.tireStack = 0;  // ★
     gameState.floorSlowEndTime = 0;
     gameState.starEndTime = 0;
     gameState.stunEndTime = 0;
@@ -1836,6 +1935,8 @@ function startStage(stageNum) {
     gameState.transitioning = false;
     // ★ 追加: 不穏演出リセット
     gameState.dangerTriggered = false;
+    gameState.guaranteedClock = false;
+    gameState.guaranteedTire = false;
     UI.hideDangerMsg();
 
     currentSpeed = CONFIG.BASE_SPEED * getDifficultySpeedMul(stageNum);
@@ -1963,12 +2064,21 @@ function checkTileGimmick() {
 
     if (!skipHoleCheck && holeHere) {
         piyo.onHole = true;
+        piyo.springJustPlayed = false;
     } else {
         // 通常タイルを探す
         const tile = world.getTileAt(px, pz);
         if (tile) {
             piyo.onHole = (tile.type === 'hole'); // getTileAtはvisible=trueのみなので通常これはfalse
-            if (tile.type === 'spring') piyo.jump('long');
+            if (tile.type === 'spring') {
+                if (!piyo.springJustPlayed) {
+                    soundManager.playTone('spring');
+                    piyo.springJustPlayed = true;
+                }
+                piyo.jump('long');
+            } else {
+                piyo.springJustPlayed = false;
+            }
             if (tile.type === 'slow_floor' && !isFloorSlowActive()) {
                 gameState.floorSlowEndTime = Date.now() + CONFIG.FLOOR_SLOW_DURATION_MS;
                 UI.showEffectToast('スピードダウン...', 'minus');
@@ -2038,7 +2148,7 @@ function updateGameTick() {
     const stunned = isStunned();
     const danger = isDanger();
 
-    if (gameState.tireEndTime > 0 && !tire) { gameState.tireEndTime = 0; piyo.tireGroup.visible = false; }
+    if (gameState.tireEndTime > 0 && !tire) { gameState.tireEndTime = 0; gameState.tireStack = 0; piyo.tireGroup.visible = false; }  // ★ スタックリセット
     if (gameState.starEndTime > 0 && !star) {
         gameState.starEndTime = 0; piyo.aura.visible = false;
         // スター終了後：不穏状態に戻す or 通常に戻す
@@ -2051,7 +2161,7 @@ function updateGameTick() {
     } else {
         targetSpeed = CONFIG.BASE_SPEED * getDifficultySpeedMul(gameState.stage);
         if (floorSlow) targetSpeed *= CONFIG.SLOW_SPEED_RATIO;
-        if (tire) targetSpeed *= CONFIG.TIRE_SPEED_RATIO;
+        if (tire) targetSpeed *= (CONFIG.TIRE_SPEED_RATIO + (gameState.tireStack - 1) * CONFIG.TIRE_STACK_RATIO);  // ★ 重ね掛け
         if (star) targetSpeed *= 1.15;
     }
     currentSpeed += (targetSpeed - currentSpeed) * (stunned ? 0.3 : CONFIG.SPEED_LERP);
@@ -2079,6 +2189,29 @@ function updateGameTick() {
 
     if (!gameState.goalSpawned) {
         gameState.distance += currentSpeed;
+
+        // ★ 保証スポーン: 40%地点を超えていてまだ出ていなければ強制スポーン
+        if (gameState.distance >= gameState.guaranteedTriggerDist) {
+            if (!gameState.guaranteedClock) {
+                gameState.guaranteedClock = true;
+                // ぴよのZ座標付近のレーンに出す（取りやすい位置）
+                const spawnX = 18;  // 画面右端より少し先
+                const spawnZ = piyo ? piyo.mesh.position.z : 0;
+                objectManager.spawnSingle('clock', spawnX, spawnZ);
+            }
+            if (!gameState.guaranteedTire) {
+                gameState.guaranteedTire = true;
+                const spawnX = 24;  // 時計より少し奥
+                const laneOffset = CONFIG.LANE_WIDTH;
+                const spawnZ = piyo ? piyo.mesh.position.z + laneOffset : laneOffset;
+                // レーンをずらして時計と重ならないように
+                const clampedZ = Math.max(
+                    laneToZ(0), Math.min(laneToZ(CONFIG.LANE_COUNT - 1), spawnZ)
+                );
+                objectManager.spawnSingle('tire', spawnX, clampedZ);
+            }
+        }
+
         if (gameState.distance >= gameState.goalDistance) {
             gameState.goalSpawned = true;
             goalGate.spawn();
