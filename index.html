@@ -447,7 +447,9 @@ window.onerror = (m, s, l, c, e) => console.error(m, e);
 // =====================================================================
 
 const IS_IOS = /iPad|iPhone|iPod/.test(navigator.userAgent) && !window.MSStream;
-const BASE_SPEED_VAL = IS_IOS ? 0.45 : 0.25;
+const BASE_SPEED_VAL = 0.25;  // ★ PC/iPad共通値（dt補正で速度を揃える）
+// 60fps基準の1フレーム時間(ms)
+const TARGET_FRAME_MS = 1000 / 60;
 
 const COLORS = {
     SKY: 0x87CEEB,
@@ -610,6 +612,7 @@ const gameState = {
     score: 0,
     stage: 1,
     frameCount: 0,
+    dtScale: 1.0,   // フレームレート補正係数（60fps=1.0、120fps=0.5×2回=同じ）
     distance: 0,
     goalDistance: 280,
     stageTimeSec: 30,
@@ -1378,10 +1381,11 @@ class Piyo {
     }
 
     _updateVertical(stunned, tire) {
+        const ds = gameState.dtScale;  // ★ dt補正
         if (this.isJumping) {
-            this.mesh.position.y += this.yVelocity;
+            this.mesh.position.y += this.yVelocity * ds;
             const g = this.isFloating ? CONFIG.FLOAT_GRAVITY : CONFIG.GRAVITY;
-            this.yVelocity -= g;
+            this.yVelocity -= g * ds;
             if (this.isFloating) this.mesh.rotation.z -= 0.15;
             else this.mesh.rotation.z += (0 - this.mesh.rotation.z) * 0.1;
             if (this.mesh.position.y <= 1 && !this.onHole && !this.falling) {
@@ -1397,8 +1401,8 @@ class Piyo {
                     if (!stunned) this.mesh.rotation.z = Math.sin(this.bounceOffset) * 0.05;
                 }
             } else {
-                this.mesh.position.y -= 0.3;
-                this.mesh.rotation.z += 0.2;
+                this.mesh.position.y -= 0.3 * ds;
+                this.mesh.rotation.z += 0.2 * ds;
                 if (this.mesh.position.y < -5 && !this.falling) this.handleFall();
                 // ★ タイヤ落下中に深く落ちすぎたら強制リスポーン（タイムロスあり）
                 if (this.falling && !this.respawning && this.mesh.position.y < -8) {
@@ -1497,8 +1501,8 @@ class World {
         tile.mesh.material = isEven ? matGroundA : matGroundB;
     }
 
-    update() {
-        const speed = currentSpeed;
+    update(dtScale) {
+        const speed = currentSpeed * dtScale;  // ★ dt補正
         const size = CONFIG.TILE_SIZE;
         this.sceneryGroup.children.forEach(c => {
             c.position.x -= speed * c.userData.speedRate;
@@ -1572,9 +1576,9 @@ class GoalGate {
 
     hide() { this.group.visible = false; }
 
-    update() {
+    update(dtScale) {
         if (!this.group.visible) return;
-        this.group.position.x -= currentSpeed;
+        this.group.position.x -= currentSpeed * dtScale;  // ★ dt補正
         if (!this.reached && this.group.position.x <= -4) {
             this.reached = true;
             onGoalReached();
@@ -1760,8 +1764,8 @@ class ObjectManager {
         }
     }
 
-    update() {
-        const speed = currentSpeed;
+    update(dtScale) {
+        const speed = currentSpeed * dtScale;  // ★ dt補正
         for (let i = this.objects.length - 1; i >= 0; i--) {
             const obj = this.objects[i];
             obj.mesh.position.x -= speed;
@@ -2137,6 +2141,9 @@ function updateGameTick() {
     const dt = now - gameState.lastTickMs;
     gameState.lastTickMs = now;
 
+    // ★ フレームレート補正: 60fps基準に正規化（120fps iPadでも同じ速度に）
+    gameState.dtScale = Math.min(dt / TARGET_FRAME_MS, 2.5);  // 最大2.5倍でクランプ
+
     if (gameState.transitioning) {
         currentSpeed = 0;
         return;
@@ -2188,7 +2195,7 @@ function updateGameTick() {
     }
 
     if (!gameState.goalSpawned) {
-        gameState.distance += currentSpeed;
+        gameState.distance += currentSpeed * gameState.dtScale;  // ★ dt補正
 
         // ★ 保証スポーン: 40%地点を超えていてまだ出ていなければ強制スポーン
         if (gameState.distance >= gameState.guaranteedTriggerDist) {
@@ -2359,9 +2366,9 @@ function animate() {
     if (gameState.isPlaying) {
         gameState.frameCount++;
         updateGameTick();
-        world.update();
-        objectManager.update();
-        goalGate.update();
+        world.update(gameState.dtScale);
+        objectManager.update(gameState.dtScale);
+        goalGate.update(gameState.dtScale);
         piyo.update();
         particleSystem.update();
         checkTileGimmick();
